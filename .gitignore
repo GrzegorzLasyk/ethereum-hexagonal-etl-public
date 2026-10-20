@@ -1,0 +1,47 @@
+# Go binaries
+/bin/
+/dist/
+/build/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+
+# Go test coverage
+*.out
+coverage/
+coverage.html
+coverage.out
+
+# Profiling
+*.prof
+*.pprof
+
+# Environment variables
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+/logs/
+
+# Temporary files
+/tmp/
+/temp/
+
+# Local configuration
+config.local.yaml
+config.local.yml
+
+# Private notes
+README-priv.md
