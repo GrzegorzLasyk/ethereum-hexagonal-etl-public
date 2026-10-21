@@ -1,7 +1,7 @@
 # ADR 0002: Ethereum source data and single-block extraction boundary
 
-- Status: Accepted; extended in Stage 4 with the approved Infura Ethereum Mainnet source.
-- Scope: Extractor source dataset, domain/application contracts, and Stage 4 JSON-RPC acquisition. Database and inter-service transport implementations remain outside this ADR's implementation scope.
+- Status: Accepted; extended in Stage 4 with the approved Infura Ethereum Mainnet source and Stage 5 with local persistence semantics.
+- Scope: Extractor source dataset, domain/application contracts, JSON-RPC acquisition and local persistence. Inter-service transport implementation remains outside this scope.
 - Related: [ADR 0001](0001-mvp-transport-and-storage.md), [plan](../../PLAN.md), [instructions](../../AGENTS.md).
 
 ## Decision and ownership
@@ -57,7 +57,9 @@ The stable event identity is `raw-block/v1/<decimal-chain-id>/<decimal-number>/<
 - Cancellation or connection failure during a real commit can have an ambiguous outcome. An adapter must not claim rollback unless known; idempotent retry resolves a commit whose success response was lost.
 - If persistence reports success, return success even if cancellation arrives immediately afterwards: the durable boundary has already been crossed.
 
-Stage 3 fakes exercise these contracts in memory. They are not production persistence, do not create migrations, and are never wired into the executable. Database atomicity and durable recovery remain to be tested with a real adapter in Stage 5.
+Stage 3 fakes exercise these contracts in memory. They are not production persistence, do not create migrations, and are never wired into the executable. Stage 5 tests the real adapter's atomicity and recovery separately against PostgreSQL.
+
+Stage 5 implements this boundary in the Extractor PostgreSQL adapter. It keeps exact source bytes in `bytea`/`bytea[]`, adapter-owned versioned metadata in `jsonb`, and nanosecond source timestamps in RFC3339Nano text. The outbox intent references an immutable snapshot within the same schema; it does not select a gRPC payload format or allow cross-service database access. The first accepted lineage is retained, with conflicts rejected rather than reconciled automatically. A transaction-scoped per-chain lock covers checkpoint bootstrap and advancement; expected-checkpoint comparison and conditional writes prevent stale writers from changing progress. Duplicate exact identities retain original provenance. Commit acknowledgement loss remains an explicit unknown outcome resolved by retrying that identity. See the [Stage 5 README](../../README.md#extractor-postgresql-persistence-stage-5) for schema, permissions, tests and limitations.
 
 ## Alternatives and unresolved decisions
 

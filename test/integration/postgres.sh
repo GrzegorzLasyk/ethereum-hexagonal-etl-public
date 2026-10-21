@@ -53,6 +53,8 @@ cleanup() {
 trap cleanup EXIT
 
 for service in "${services[@]}"; do
+    expected_migrations=1
+    if [[ "$service" == extractor ]]; then expected_migrations=2; fi
     migrate "$service"
     before=$(sql "${service}_migrator" \
         "SELECT version || checksum || applied_at::text FROM $service.schema_migrations ORDER BY version")
@@ -61,7 +63,7 @@ for service in "${services[@]}"; do
         "SELECT version || checksum || applied_at::text FROM $service.schema_migrations ORDER BY version")
     [[ "$before" == "$after" ]]
     assert_value "${service}_migrator" \
-        "SELECT count(*) FROM $service.schema_migrations" 1
+        "SELECT count(*) FROM $service.schema_migrations" "$expected_migrations"
 
     # Concurrent re-application must serialize without duplicate version rows.
     migrate "$service" >"$work/concurrent-1" 2>&1 &
@@ -71,7 +73,7 @@ for service in "${services[@]}"; do
     wait "$first"
     wait "$second"
     assert_value "${service}_migrator" \
-        "SELECT count(*) FROM $service.schema_migrations" 1
+        "SELECT count(*) FROM $service.schema_migrations" "$expected_migrations"
 
     for kind in migrator runtime; do
         role="${service}_$kind"
@@ -166,14 +168,18 @@ fi
 grep -q "division by zero" "$work/rollback"
 assert_value extractor_migrator \
     "SELECT to_regclass('extractor.${probe}_rollback') IS NULL" t
-assert_value extractor_migrator "SELECT count(*) FROM extractor.schema_migrations" 1
+assert_value extractor_migrator "SELECT count(*) FROM extractor.schema_migrations" 2
 echo "PASS: changed checksums rejected and failing migration batch rolled back"
 
-# Drop probes before asserting that no application tables were introduced.
+# Drop probes before checking the exact stage-owned table inventory.
 cleanup
 trap - EXIT
 for service in "${services[@]}"; do
+    expected_tables=schema_migrations
+    if [[ "$service" == extractor ]]; then
+        expected_tables=extraction_checkpoints,outbox_events,raw_blocks,schema_migrations
+    fi
     assert_value "${service}_migrator" \
-        "SELECT string_agg(tablename, ',') FROM pg_tables WHERE schemaname = '$service'" schema_migrations
+        "SELECT string_agg(tablename, ',' ORDER BY tablename) FROM pg_tables WHERE schemaname = '$service'" "$expected_tables"
 done
-echo "PASS: only migration metadata remains; no ETL tables"
+echo "PASS: exact stage-owned tables remain; no test probes or unplanned tables"

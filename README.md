@@ -10,6 +10,8 @@ Stage 3 adds Extractor domain rules, ports, and a single-block extraction use ca
 
 Stage 4 adds the Extractor's Ethereum JSON-RPC outbound adapter, controlled HTTP tests, and an optional Infura Mainnet smoke test. It returns complete source snapshots through `BlockSource`; the executable still does not run extraction or persist data.
 
+Stage 5 adds Extractor-owned PostgreSQL storage for raw snapshots, outbox intents, and checkpoints through `ExtractionStore`. The source and storage adapters are individually usable; the executable remains a lifecycle skeleton. Scheduling, gRPC contracts and outbox dispatch are not implemented.
+
 The approved MVP uses gRPC with Protocol Buffers for transport and service-owned PostgreSQL schemas with transactional outbox/inbox storage for durable, at-least-once handoff. A receiver will acknowledge an event only after its inbox transaction commits. See [ADR 0001](docs/adr/0001-mvp-transport-and-storage.md), [PLAN.md](PLAN.md), and [AGENTS.md](AGENTS.md) for decisions and staged implementation.
 
 ## Prerequisites
@@ -105,6 +107,11 @@ services/
       protocol_test.go
       live_test.go
       testdata/
+    internal/adapters/outbound/postgres/
+      store.go
+      snapshot.go
+      store_test.go
+      integration_test.go
     internal/config/config.go
     internal/config/config_test.go
   transformer-service/
@@ -151,6 +158,7 @@ Unit tests cover complete and empty blocks, invalid/missing metadata, wrong chai
 gofmt -w services/*/cmd/*/*.go services/*/internal/config/*.go
 gofmt -w services/extractor-service/internal/domain/*.go services/extractor-service/internal/application/ports/inbound/*.go services/extractor-service/internal/application/ports/outbound/*.go services/extractor-service/internal/application/usecases/*.go
 gofmt -w services/extractor-service/internal/adapters/outbound/jsonrpc/*.go
+gofmt -w services/extractor-service/internal/adapters/outbound/postgres/*.go
 go test ./...
 go vet ./...
 ```
@@ -209,6 +217,64 @@ go test -tags live -run '^$' ./services/extractor-service/internal/adapters/outb
 Ordinary tests use `httptest` and synthetic fixtures; they need local loopback sockets but no external network or secrets. They cover full/empty blocks, transaction types 0–4, historical receipts, raw byte preservation, metadata consistency, wrong/changing chains, malformed envelopes, duplicate JSON keys, null data, rate limits, bounded retries, cancellation/timeouts, response/snapshot limits, redirect prevention, credential redaction, and concurrent request pacing/IDs.
 
 Receipt calls are sequential and unbatched: `N + 3` RPC calls per block before retries, plus the use case's own chain check. No archive entitlement or throughput is assumed. Unknown fields are retained; unknown transaction types fail explicitly. Fork-dependent fields are checked when present and where implied by transaction type; there is no complete fork-activation calendar. Validation checks source shape and consistency, not signatures, header/trie roots, or consensus. Conflicting receipt/log hashes fail, but a consistent snapshot is not proof of finality or continued canonicality. Reorg reconciliation, durable storage, outbox/gRPC delivery, and range/follow-head workers belong to later stages.
+
+## Extractor PostgreSQL persistence (Stage 5)
+
+Migration `migrations/extractor/0002_extraction_storage.sql` is owned and applied by `extractor_migrator`. The runtime adapter uses `extractor_runtime` in `ethereum_etl`. Run the existing Compose migration command after PostgreSQL becomes healthy:
+
+```sh
+docker compose --env-file .env -f deployments/compose/compose.yaml run --rm migrate-extractor
+```
+
+Reapplication is safe through the existing checksum/version runner; do not execute a previously applied migration file directly or edit its contents. Transformer and Loader receive no new tables or business logic.
+
+| Extractor table | Stored data and access |
+| --- | --- |
+| `raw_blocks` | Full identity `(chain_id, block_number, block_hash)`, parent hash, exact raw block bytes and ordered raw receipt bytes, versioned typed metadata, provider and original extraction time. Runtime: SELECT/INSERT only. |
+| `outbox_events` | Stable `raw-block/v1/<chain>/<number>/<hash>` event ID and a foreign key to the immutable local snapshot, plus creation time. Runtime: SELECT/INSERT only. Every row is a pending intent. |
+| `extraction_checkpoints` | One last committed block identity per configured chain and update time, with foreign keys to both the source snapshot and outbox intent. Runtime: SELECT/INSERT and UPDATE of position/hash/time only. |
+
+Raw JSON is stored in `bytea` / ordered `bytea[]`, preserving whitespace, unknown fields, and numeric spelling. Only adapter-owned typed metadata uses versioned `jsonb`. Source extraction time is RFC3339Nano text so PostgreSQL's microsecond timestamp precision cannot discard its nanoseconds; database write times use `timestamptz`. Heights use bounded `numeric(20,0)` to retain the port's complete uint64 range. Chain IDs remain canonical decimal text. Primary/unique indexes support identity, height, event and checkpoint lookup; there are no speculative delivery-state indexes.
+
+`raw_blocks` stores the accepted extraction lineage, not proof of consensus canonicality. Alongside its full-identity primary key, a unique chain/height constraint prevents silently retaining competing accepted hashes. The adapter explicitly detects conflicting hashes and parent hashes and stops. It does not overwrite data, rewind progress, promote an alternate fork, or label a block finalized. Reconciliation and finality policy remain separate decisions.
+
+The outbox reference is strictly local to Extractor storage. It retains everything needed to construct a future outgoing message without duplicating raw JSON in a second table. It does not authorize another service to read Extractor tables or decide payload-versus-reference gRPC contracts. No delivery/ACK state, dispatcher, automatic retries, or retention cleanup is added in Stage 5.
+
+### Adapter construction and dependencies
+
+Use `postgres.New(pool, chainID, startBlock)` from within the Extractor's service boundary, passing the same chain and start as `usecases.NewExtractBlock`. The pool is a `pgxpool.Pool`; the constructor borrows it and the caller must close it on shutdown. Create it with explicit runtime credentials, connection limits and connect timeout; pass deadlines through every application call. Keep connection strings in a private environment/secret store and never print configuration or raw driver connection errors. Production TLS configuration belongs to deployment; the disposable loopback test uses `sslmode=disable` only locally.
+
+The adapter implements the unchanged `ExtractionStore` port. Its `Load(ctx, blockID)` method also retrieves the original snapshot by full identity for local verification; it is not a new inter-service API. SQL uses schema-qualified names and bind parameters. `pgx/v5` is the one direct new dependency: Go's standard library does not provide a PostgreSQL driver. Driver, pool, SQL and storage DTOs stay outside domain/application packages. The service binary does not yet read a database URL or wire an extraction worker.
+
+### Atomicity, concurrency and recovery
+
+Each commit starts one Read Committed transaction and takes a transaction-scoped advisory lock for the configured chain, including when no checkpoint row exists. Different writers then compare the actual checkpoint against `ExpectedCheckpoint` **inside** that transaction. The checkpoint write additionally uses a conditional update/insert. A lock-hash collision only serializes unrelated chains; no process-local mutex is used for correctness. All adapter writers must follow this protocol; migration/admin SQL is trusted and must not manually alter live progress.
+
+For a new block, the transaction inserts raw data, inserts exactly one stable outbox intent, then advances the checkpoint, and commits all three together. Initial extraction must match configured start. Subsequent extraction must be the immediate child with the expected parent hash. Stale expectations, missing intermediate blocks, conflicting identities and overflow cannot advance progress. Any pre-commit failure rolls back partial writes. The runtime cannot update raw snapshots, delete any of these records, manipulate migration metadata, perform DDL, or access another service schema.
+
+An exact stored identity with a matching parent is an idempotent success (`AlreadyStored`), even if another writer has since advanced the checkpoint. It preserves the first raw bytes, provider, extraction time and event; no checkpoint regression or second event occurs. A stored row without its expected durable intent/progress is reported as corruption rather than treated as successful recovery. The use case still controls scheduling: it only accepts the current checkpoint or its immediate child, while the store can safely resolve an older in-flight duplicate without changing progress.
+
+`AlreadyStored` confirms durable **block identity**, not equality of complete snapshots. A valid retry can contain different raw block/receipt bytes, typed metadata or provenance; these do not replace the first snapshot and are not certified as equivalent. Domain validation and the parent-hash check still apply. Storage serialization happens only for a new block, so replacement provenance that is never written cannot prevent identity-based recovery. Raw-to-metadata correspondence and provider trust remain source-adapter responsibilities; the store does not reparse Ethereum JSON or cryptographically verify block contents.
+
+On restart, read `Checkpoint`: nil means no committed extraction and the configured start is next; otherwise resume at the immediate child, subject to the uint64 boundary. A successful commit means source data and handoff intent are durable, not that downstream processing finished. An error from `COMMIT` may mean the server committed but its response was lost. The adapter exposes `ErrCommitUnknown` conservatively, performs no automatic retry, and never claims rollback based on a transport failure. Retry **the same full block identity and event**, even with the old expected checkpoint: it either returns `AlreadyStored` or commits once if the first transaction rolled back. If the chain now supplies a different hash, stop for explicit reconciliation. A fresh valid context is needed after cancellation. Cancellation after an acknowledged successful commit does not undo success.
+
+### PostgreSQL integration tests
+
+The reproducible suite requires Go, Python 3, Docker Engine/Desktop and Compose. It creates a uniquely named temporary Compose project, random credentials in a temporary mode-600 file, and an available loopback port. It never uses your `.env` or an existing database. On exit it removes only its own containers, network, volume and temporary secret file:
+
+```sh
+python3 test/integration/extractor_postgres.py
+```
+
+The runner validates Compose, starts a healthy PostgreSQL, runs the existing migration/permission suite (including repeated/concurrent application, checksums and rollback), then runs:
+
+```sh
+go test -tags postgresintegration -race -run '^TestPostgresIntegration$' -count=1 -timeout=3m -v ./services/extractor-service/internal/adapters/outbound/postgres
+```
+
+The runner supplies private `EXTRACTOR_TEST_DATABASE_URL` and `EXTRACTOR_TEST_MIGRATOR_URL` variables only to the test process. Do not point these at production: tests insert fixtures and temporarily install failure-injection triggers using the migrator role. Application writes always use the runtime role. Without these settings the tagged tests skip; ordinary `go test ./...` runs storage encoding/validation tests without PostgreSQL.
+
+Integration cases cover failures before each of the three writes (initial and continuation), complete rollback and retry, duplicates with preserved provenance, stable event IDs, concurrent identical/forked writers, stale expectations, gaps/regression, hash/parent conflicts, uint64 maximum height, recovery through a fresh pool, cancellation during lock contention, and runtime permission denial. Ambiguous outcomes are injected around a real PostgreSQL COMMIT, both before and after it, followed by a resolving retry. This deterministically tests acknowledgement loss semantics; it is not a network fault proxy or machine power-loss test.
 
 ## Local PostgreSQL (Stage 2)
 
@@ -277,7 +343,7 @@ The first-volume bootstrap runs as the PostgreSQL administrator to create the si
 
 All six service logins have no superuser, role/database creation, replication, bypass-RLS, inherited membership, or membership in other service roles. Database-level PUBLIC privileges and PUBLIC access to the `public` schema are revoked. Service roles receive CONNECT, but no database CREATE or TEMP privileges. The migrator owns only its service schema. Runtime receives USAGE on its own schema and no CREATE, ownership, or access to migration metadata. Neither role can access another service's schema or assume its roles. PostgreSQL system catalog visibility is not a promise of metadata secrecy; the isolation boundary protects service objects and data.
 
-There are no blanket runtime table grants. When application tables are introduced in their planned stages, their service-owned migrations must grant only the needed operations and sequence privileges explicitly. New functions and types do not receive PUBLIC access by default. The global default revokes are intentional: schema-local revokes cannot remove privileges granted globally. See the [PostgreSQL default-privilege documentation](https://www.postgresql.org/docs/17/sql-alterdefaultprivileges.html).
+There are no blanket runtime table grants. Stage 5 grants only the operations listed above on Extractor tables; future service-owned migrations must likewise grant operations explicitly. New functions and types do not receive PUBLIC access by default. The global default revokes are intentional: schema-local revokes cannot remove privileges granted globally. See the [PostgreSQL default-privilege documentation](https://www.postgresql.org/docs/17/sql-alterdefaultprivileges.html).
 
 ### Apply migrations
 
@@ -311,7 +377,7 @@ dc run --rm verify
 
 This Stage 2 integration suite uses actual authenticated TCP connections, with no administrator password. It verifies all six roles, schema ownership, database restrictions, cross-schema read/write/DDL denial, blocked role escalation, runtime DDL and migration-metadata denial, explicit own-schema CRUD grants, sequence/function isolation, and rejection of wrong passwords. It also checks repeated/concurrent migrations, checksum mismatch rejection, and transaction rollback on an intentionally failing migration batch.
 
-The test temporarily creates uniquely named probe tables/functions, grants narrowly scoped probe access, and removes these objects on exit. It uses temporary copies of migration files for failure tests and does not edit committed migrations. Run it on the local Stage 2 database, not production: its final assertion expects only migration metadata in each service schema and must evolve when later stages introduce tables. A forcibly killed test may require cleanup of its `stage2_probe_*` objects by the owning migrator.
+The test temporarily creates uniquely named probe tables/functions, grants narrowly scoped probe access, and removes these objects on exit. It uses temporary copies of migration files for failure tests and does not edit committed migrations. Run it on the local development database, not production: its final assertion checks the exact current inventory (migration metadata plus the three Stage 5 Extractor tables). A forcibly killed test may require cleanup of its `stage2_probe_*` objects by the owning migrator.
 
 To verify persistence across container replacement, after a successful test:
 
