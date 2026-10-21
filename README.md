@@ -10,7 +10,9 @@ Stage 3 adds Extractor domain rules, ports, and a single-block extraction use ca
 
 Stage 4 adds the Extractor's Ethereum JSON-RPC outbound adapter, controlled HTTP tests, and an optional Infura Mainnet smoke test. It returns complete source snapshots through `BlockSource`; the executable still does not run extraction or persist data.
 
-Stage 5 adds Extractor-owned PostgreSQL storage for raw snapshots, outbox intents, and checkpoints through `ExtractionStore`. The source and storage adapters are individually usable; the executable remains a lifecycle skeleton. Scheduling, gRPC contracts and outbox dispatch are not implemented.
+Stage 5 adds Extractor-owned PostgreSQL storage for raw snapshots, outbox intents, and checkpoints through `ExtractionStore`. The source and storage adapters are individually usable; the executable remains a lifecycle skeleton. Scheduling and outbox dispatch are not implemented.
+
+Stage 6 adds versioned protobuf contracts, reproducible generation, and inbound gRPC receiver adapters for Transformer and Loader. Service-owned application ports contain only plain Go types. Without an acceptance implementation, valid calls return `Unimplemented`; no event is acknowledged or stored. Executables remain lifecycle skeletons with no listeners. See [contracts, generation and limits](docs/architecture/protobuf-contracts.md).
 
 The approved MVP uses gRPC with Protocol Buffers for transport and service-owned PostgreSQL schemas with transactional outbox/inbox storage for durable, at-least-once handoff. A receiver will acknowledge an event only after its inbox transaction commits. See [ADR 0001](docs/adr/0001-mvp-transport-and-storage.md), [PLAN.md](PLAN.md), and [AGENTS.md](AGENTS.md) for decisions and staged implementation.
 
@@ -116,10 +118,18 @@ services/
     internal/config/config_test.go
   transformer-service/
     cmd/transformer/main.go
+    internal/application/ports/inbound/accept_block.go
+    internal/adapters/inbound/grpc/
+      receiver.go
+      receiver_test.go
     internal/config/config.go
     internal/config/config_test.go
   loader-service/
     cmd/loader/main.go
+    internal/application/ports/inbound/accept_block.go
+    internal/adapters/inbound/grpc/
+      receiver.go
+      receiver_test.go
     internal/config/config.go
     internal/config/config_test.go
 ```

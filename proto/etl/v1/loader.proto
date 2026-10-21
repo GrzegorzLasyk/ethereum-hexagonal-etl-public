@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package etl.v1;
+
+import "etl/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/gen/etl/v1;etlv1";
+
+service LoaderService {
+  // ACK only after receiver inbox commit, including durable duplicates.
+  // Stage 6 without an acceptance implementation returns Unimplemented.
+  rpc SubmitTransformedBlock(SubmitTransformedBlockRequest) returns (SubmitTransformedBlockResponse);
+}
+
+message SubmitTransformedBlockRequest {
+  // event_id = transformed-block/v1/<decimal-chain>/<decimal-number>/<lowercase-hash>.
+  // Event and payload schema versions must both be 1. Original provenance remains.
+  EventMetadata metadata = 1;
+  // Versioned JSON object; metadata.payload_version names its schema version.
+  // Stage 7 defines normalized fields; Stage 6 checks only JSON object syntax.
+  // Default JSON byte limit: 64 MiB; whole message: 65 MiB. No truncation.
+  bytes payload_json = 2;
+  // Corresponding raw-block/v1 event for the same block identity.
+  string source_event_id = 3;
+  google.protobuf.Timestamp transformed_at = 4;
+}
+
+message SubmitTransformedBlockResponse {
+  // Positive acceptance means durable Inbox storage, not completed loading.
+  DurableAcceptance acceptance = 1;
+}
