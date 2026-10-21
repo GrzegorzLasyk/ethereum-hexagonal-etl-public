@@ -1,0 +1,88 @@
+name: ethereum-etl
+
+x-client: &client
+  image: postgres:17.11-bookworm
+  profiles: ["tools"]
+  depends_on:
+    postgres:
+      condition: service_healthy
+  volumes:
+    - ./scripts:/scripts:ro
+    - ../../migrations:/migrations:ro
+  entrypoint: ["/bin/bash", "/scripts/migrate.sh"]
+
+x-connection: &connection
+  PGHOST: postgres
+  PGPORT: "5432"
+  PGDATABASE: ethereum_etl
+  PGCONNECT_TIMEOUT: "5"
+
+services:
+  postgres:
+    image: postgres:17.11-bookworm
+    environment:
+      POSTGRES_DB: ethereum_etl
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+      EXTRACTOR_MIGRATOR_PASSWORD: ${EXTRACTOR_MIGRATOR_PASSWORD:?Set EXTRACTOR_MIGRATOR_PASSWORD in .env}
+      EXTRACTOR_RUNTIME_PASSWORD: ${EXTRACTOR_RUNTIME_PASSWORD:?Set EXTRACTOR_RUNTIME_PASSWORD in .env}
+      TRANSFORMER_MIGRATOR_PASSWORD: ${TRANSFORMER_MIGRATOR_PASSWORD:?Set TRANSFORMER_MIGRATOR_PASSWORD in .env}
+      TRANSFORMER_RUNTIME_PASSWORD: ${TRANSFORMER_RUNTIME_PASSWORD:?Set TRANSFORMER_RUNTIME_PASSWORD in .env}
+      LOADER_MIGRATOR_PASSWORD: ${LOADER_MIGRATOR_PASSWORD:?Set LOADER_MIGRATOR_PASSWORD in .env}
+      LOADER_RUNTIME_PASSWORD: ${LOADER_RUNTIME_PASSWORD:?Set LOADER_RUNTIME_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "PGPASSWORD=\"$$POSTGRES_PASSWORD\" psql -X -w -h 127.0.0.1 -U postgres -d ethereum_etl -tAc 'SELECT 1' >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    stop_grace_period: 30s
+
+  migrate-extractor:
+    <<: *client
+    environment:
+      <<: *connection
+      PGUSER: extractor_migrator
+      PGPASSWORD: ${EXTRACTOR_MIGRATOR_PASSWORD:?Set EXTRACTOR_MIGRATOR_PASSWORD in .env}
+    command: ["extractor"]
+
+  migrate-transformer:
+    <<: *client
+    environment:
+      <<: *connection
+      PGUSER: transformer_migrator
+      PGPASSWORD: ${TRANSFORMER_MIGRATOR_PASSWORD:?Set TRANSFORMER_MIGRATOR_PASSWORD in .env}
+    command: ["transformer"]
+
+  migrate-loader:
+    <<: *client
+    environment:
+      <<: *connection
+      PGUSER: loader_migrator
+      PGPASSWORD: ${LOADER_MIGRATOR_PASSWORD:?Set LOADER_MIGRATOR_PASSWORD in .env}
+    command: ["loader"]
+
+  verify:
+    <<: *client
+    entrypoint: ["/bin/bash", "/tests/postgres.sh"]
+    environment:
+      <<: *connection
+      EXTRACTOR_MIGRATOR_PASSWORD: ${EXTRACTOR_MIGRATOR_PASSWORD:?Set EXTRACTOR_MIGRATOR_PASSWORD in .env}
+      EXTRACTOR_RUNTIME_PASSWORD: ${EXTRACTOR_RUNTIME_PASSWORD:?Set EXTRACTOR_RUNTIME_PASSWORD in .env}
+      TRANSFORMER_MIGRATOR_PASSWORD: ${TRANSFORMER_MIGRATOR_PASSWORD:?Set TRANSFORMER_MIGRATOR_PASSWORD in .env}
+      TRANSFORMER_RUNTIME_PASSWORD: ${TRANSFORMER_RUNTIME_PASSWORD:?Set TRANSFORMER_RUNTIME_PASSWORD in .env}
+      LOADER_MIGRATOR_PASSWORD: ${LOADER_MIGRATOR_PASSWORD:?Set LOADER_MIGRATOR_PASSWORD in .env}
+      LOADER_RUNTIME_PASSWORD: ${LOADER_RUNTIME_PASSWORD:?Set LOADER_RUNTIME_PASSWORD in .env}
+    volumes:
+      - ./scripts:/scripts:ro
+      - ../../migrations:/migrations:ro
+      - ../../test/integration:/tests:ro
+
+volumes:
+  postgres_data:
