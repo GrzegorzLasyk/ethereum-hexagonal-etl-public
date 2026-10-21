@@ -20,6 +20,8 @@ type CommitExtraction struct {
 }
 
 type CommitResult struct {
+	// AlreadyStored confirms durable block identity, not equality of the
+	// submitted raw JSON, typed snapshot metadata or extraction provenance.
 	AlreadyStored bool
 }
 
