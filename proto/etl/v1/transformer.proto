@@ -1,0 +1,40 @@
+syntax = "proto3";
+
+package etl.v1;
+
+import "etl/v1/common.proto";
+
+option go_package = "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/gen/etl/v1;etlv1";
+
+service TransformerService {
+  // ACK only after receiver inbox commit, including durable duplicates.
+  // Stage 6 without an acceptance implementation returns Unimplemented.
+  rpc SubmitRawBlock(SubmitRawBlockRequest) returns (SubmitRawBlockResponse);
+}
+
+message RawReceipts {
+  // Exact successful eth_getTransactionReceipt result bytes in transaction order.
+  // Empty is valid for an empty block. Logs remain inside each receipt JSON.
+  repeated bytes json = 1;
+}
+
+message RawBlockPayload {
+  // Exact eth_getBlockByNumber(number, true) result; no JSON-RPC envelope.
+  bytes block_json = 1;
+  // Required even for an empty block, to distinguish omitted receipts.
+  RawReceipts receipts = 2;
+}
+
+message SubmitRawBlockRequest {
+  // event_id = raw-block/v1/<decimal-chain>/<decimal-number>/<lowercase-hash>.
+  // Hash has no 0x prefix. Event and payload schema versions must both be 1.
+  EventMetadata metadata = 1;
+  // Default aggregate JSON byte limit: 64 MiB; whole message: 65 MiB.
+  // Receivers may configure lower limits. Oversize requests fail in full.
+  RawBlockPayload payload = 2;
+}
+
+message SubmitRawBlockResponse {
+  // Positive acceptance means durable Inbox storage, not completed processing.
+  DurableAcceptance acceptance = 1;
+}

@@ -1,9 +1,9 @@
 # ADR 0001: MVP transport, storage, and reliable service handoff
 
-- Status: Accepted for the approved MVP decisions below; open questions remain deferred.
+- Status: Accepted; amended in Stage 6 with the approved payload and transport limits. Other open questions remain deferred.
 - Date: 2026-10-21
 - Sources: [AGENTS.md](../../AGENTS.md) and [PLAN.md](../../PLAN.md).
-- Scope: Stage 0 records architecture only. It does not implement services or infrastructure.
+- Scope: MVP architecture recorded in Stage 0, extended with the Stage 6 contract decision. Implementation follows the service boundaries and sequencing in PLAN.md.
 
 ## Context
 
@@ -31,7 +31,21 @@ Use gRPC with Protocol Buffers for Extractor-to-Transformer and Transformer-to-L
 
 gRPC transports an event payload. It is **not a durable broker or queue** and does not supply persistent buffering, replay, or exactly-once delivery. Durability belongs to service-owned PostgreSQL storage and application processing, not to the lifetime of an RPC connection.
 
-Contracts must carry stable event IDs and chain/block provenance and document payload bounds, error handling, and durable-acceptance semantics. The exact payload representation and size limits remain open; choosing gRPC does not settle them.
+Contracts must carry stable event IDs and chain/block provenance and document payload bounds, error handling, and durable-acceptance semantics. Stage 6 resolves the payload representation and byte limits in the approved decision below.
+
+### Stage 6: approved payload and transport limits
+
+Transmit the exact raw Ethereum block JSON result bytes and separate exact transaction receipt JSON result bytes in transaction order through `SubmitRawBlock`. The block includes full transactions; receipts include their logs. Do not reserialize source JSON or substitute database references. The receiver must not query Extractor's schema.
+
+`SubmitTransformedBlock` carries a JSON document whose schema version is explicit in `metadata.payload_version`. Stage 6 establishes the envelope and JSON-object boundary only; normalized field definitions and business validation belong to Stage 7 before any real transformed event is emitted.
+
+Both event envelopes retain stable event IDs, canonical decimal chain ID, block number/hash, parent hash, source provider and original extraction timestamp. Raw event IDs retain ADR 0002's existing formula. Transformed IDs use `transformed-block/v1/<decimal-chain-id>/<decimal-number>/<lowercase-hash>`, with no hash prefix, and carry the corresponding raw source event ID. Event version and payload schema version are separately explicit; both are 1 in this contract. Retries preserve the first committed event content and identity. Conflicting content under one event ID is an error, not an accepted duplicate.
+
+The approved maximum aggregate payload is **64 MiB** (67,108,864 bytes); the maximum protobuf gRPC message is **65 MiB** (68,157,440 bytes). Deployment configuration may lower these limits. Require positive payload limits, a message limit greater than the payload limit, and neither above the approved maximum. Raw payload size is the sum of block and all receipt JSON byte lengths, including whitespace. Transformed payload size is the JSON document length. Metadata, protobuf framing within the message, and unknown protobuf fields count toward the message limit. Oversize input fails completely with `ResourceExhausted`; never truncate, split, drop receipts or claim acceptance.
+
+Apply the same configured message budget to server receive/send and client send/receive. Future senders must additionally validate payload size before sending and align budgets with the receiving service. A transport budget is not a process-memory bound: protobuf encoding/decoding and concurrent calls add memory. Map immutable payload buffers into service-owned application requests without copying or reserializing them; acceptance must complete its durable operation before returning and must not retain borrowed buffers.
+
+Stage 6 adds no Inbox implementation. Its nil-acceptor receiver skeleton returns `Unimplemented` for valid requests. Only an explicit durable or already-durable result from a future acceptance use case permits ACK. See [contract documentation](../architecture/protobuf-contracts.md) for evolution, generation, status mapping and limitations.
 
 ### PostgreSQL ownership and isolation
 
@@ -132,7 +146,7 @@ These are unresolved details, not permission to replace approved decisions. Reco
 | Development network and provider | Choose an explicit network/provider and verify chain ID; examples use non-secret placeholders. | Source-data design and JSON-RPC adapter, Stages 3–4 |
 | Exact RPC resources and fields | Recommended blocks with full transactions plus receipts/logs; define method support and fallback receipt retrieval; exclude traces. | Source-data ADR, Stage 3 |
 | Confirmation/finality and reorg policy | Select confirmation depth, canonical-state rules, and recovery/reconciliation behavior; distinguish confirmations from finality. | Identity/checkpoint design in Stages 3–5, with continuous recovery implemented in Stage 10 |
-| Payload representation and size limits | Recommended bounded raw JSON envelope in the event versus references retrieved from Extractor over gRPC; persist the exact accepted message and define oversized-input behavior. | Dependent persistence/contract design, Stages 5–6 |
+| Payload representation and size limits | Resolved in Stage 6 above: exact raw block/receipt JSON or versioned transformed JSON; configurable budgets up to 64 MiB payload / 65 MiB message; reject oversize input. | Accepted for Stage 6; persistence and senders follow in their planned stages |
 | Worker, retry, replay, and retention details | Define attempt limits, failure recovery, claims, deduplication lifetime, backlog bounds, and cleanup without losing pending work. | Relevant persistence/worker stages, with operational review in Stage 12 |
 
 ## Future extension options

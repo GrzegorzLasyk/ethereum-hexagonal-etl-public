@@ -1,0 +1,45 @@
+syntax = "proto3";
+
+package etl.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/gen/etl/v1;etlv1";
+
+// Block number alone is not an immutable identity or a claim of finality.
+message BlockIdentity {
+  // Canonical nonnegative decimal string, without a uint64 restriction.
+  string chain_id = 1;
+  // Presence distinguishes genesis (0) from an omitted number.
+  optional uint64 number = 2;
+  // Exactly 32 bytes; block_hash must not be zero.
+  bytes block_hash = 3;
+  // Exactly 32 bytes; may be zero only for genesis.
+  bytes parent_hash = 4;
+}
+
+message EventMetadata {
+  // Stable across retries; see each request for its identity formula.
+  string event_id = 1;
+  uint32 event_version = 2;
+  // Schema version of the raw or transformed payload; version 1 only.
+  uint32 payload_version = 3;
+  BlockIdentity block = 4;
+  // Original source acquisition time and non-secret provider label.
+  google.protobuf.Timestamp extracted_at = 5;
+  string provider = 6;
+}
+
+// Both positive outcomes require an already committed receiver-owned inbox.
+// No outcome means transformation/loading is finished. Zero is never an ACK.
+enum AcceptanceStatus {
+  ACCEPTANCE_STATUS_UNSPECIFIED = 0;
+  ACCEPTANCE_STATUS_DURABLY_ACCEPTED = 1;
+  ACCEPTANCE_STATUS_ALREADY_ACCEPTED = 2;
+}
+
+message DurableAcceptance {
+  // Echo the accepted request identity; a sender must verify this match.
+  string event_id = 1;
+  AcceptanceStatus status = 2;
+}

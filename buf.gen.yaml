@@ -1,0 +1,8 @@
+version: v2
+plugins:
+  - local: bin/proto/protoc-gen-go
+    out: gen
+    opt: paths=source_relative
+  - local: bin/proto/protoc-gen-go-grpc
+    out: gen
+    opt: paths=source_relative

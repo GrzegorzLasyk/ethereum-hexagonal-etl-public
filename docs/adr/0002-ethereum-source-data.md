@@ -65,7 +65,7 @@ Stage 5 implements this boundary in the Extractor PostgreSQL adapter. It keeps e
 
 Returning only hashes would omit transaction bodies; fetching blocks without receipts would lose execution outcomes and logs. Fully normalizing every field inside Extractor would duplicate the Transformer's responsibility. Keeping opaque data without any typed membership checks would permit incomplete/mixed-block handoff. The chosen split preserves source data and validates extraction identity without coupling service domains.
 
-Stage 4 resolves the development source as Infura Ethereum Mainnet (decimal chain ID `1`), as explicitly requested. The actual credential-bearing RPC URL and account history/throughput access remain deployment configuration. Confirmation depth/finality, reorg reconciliation, production resource budgets, and later gRPC envelope or payload-versus-reference decisions remain open. Traces remain excluded.
+Stage 4 resolves the development source as Infura Ethereum Mainnet (decimal chain ID `1`), as explicitly requested. The actual credential-bearing RPC URL and account history/throughput access remain deployment configuration. Confirmation depth/finality, reorg reconciliation and production acquisition resource budgets remain open. Stage 6 resolves the gRPC envelope as exact raw block/receipt JSON bytes with configurable budgets up to 64 MiB payload / 65 MiB message; see [ADR 0001](0001-mvp-transport-and-storage.md#stage-6-approved-payload-and-transport-limits). Acquisition budgets must be aligned with the eventual handoff without changing stored source bytes. Traces remain excluded.
 
 ## Stage 4 acquisition decisions
 
