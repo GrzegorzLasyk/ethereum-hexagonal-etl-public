@@ -25,7 +25,7 @@ func integrationPool(t *testing.T, variable, role string) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv(variable)
 	if dsn == "" {
-		t.Skip("use test/integration/extractor_postgres.py to provide an isolated database")
+		t.Skip("run go run ./test/integration/cmd/extractor-postgres from the repository root to provide an isolated database")
 	}
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {

@@ -260,10 +260,19 @@ On restart, read `Checkpoint`: nil means no committed extraction and the configu
 
 ### PostgreSQL integration tests
 
-The reproducible suite requires Go, Python 3, Docker Engine/Desktop and Compose. It creates a uniquely named temporary Compose project, random credentials in a temporary mode-600 file, and an available loopback port. It never uses your `.env` or an existing database. On exit it removes only its own containers, network, volume and temporary secret file:
+The reproducible suite requires Go, Docker Engine/Desktop and Compose. Its small Go CLI uses only the standard library. It creates a uniquely named temporary Compose project, cryptographically random credentials in a temporary mode-600 file, and an available loopback port. It never uses your `.env` or an existing database. Run from the repository root:
 
 ```sh
-python3 test/integration/extractor_postgres.py
+go run ./test/integration/cmd/extractor-postgres
+```
+
+The CLI clears inherited Compose, PostgreSQL and integration database settings while preserving Go toolchain and Docker connection settings. It passes credentials through the private environment file and test-process environment, never command-line arguments. Child output is buffered per step and generated passwords/connection URLs are redacted before printing; output above 4 MiB is omitted entirely. Errors identify the failed step and exit status without dumping arguments or environments.
+
+Cleanup runs on success, failure, SIGINT and SIGTERM with its own 60-second deadline, even if the test context was cancelled. It removes only this run's containers, network and volume, then deletes the credential file. A cleanup failure remains an error and reports the generated project name for recovery. SIGKILL, a host crash or an unavailable Docker daemon can still require manual cleanup. For process supervisors that send SIGTERM to one PID, build and run the CLI directly (the `go run` wrapper does not forward every signal):
+
+```sh
+go build -o bin/extractor-postgres ./test/integration/cmd/extractor-postgres
+./bin/extractor-postgres
 ```
 
 The runner validates Compose, starts a healthy PostgreSQL, runs the existing migration/permission suite (including repeated/concurrent application, checksums and rollback), then runs:
@@ -273,6 +282,8 @@ go test -tags postgresintegration -race -run '^TestPostgresIntegration$' -count=
 ```
 
 The runner supplies private `EXTRACTOR_TEST_DATABASE_URL` and `EXTRACTOR_TEST_MIGRATOR_URL` variables only to the test process. Do not point these at production: tests insert fixtures and temporarily install failure-injection triggers using the migrator role. Application writes always use the runtime role. Without these settings the tagged tests skip; ordinary `go test ./...` runs storage encoding/validation tests without PostgreSQL.
+
+CLI unit tests also run without Docker. They check cleanup after each failed step, cancellation and cleanup errors, temporary file permissions/removal, environment isolation, unique project names and redaction of secrets split across output writes.
 
 Integration cases cover failures before each of the three writes (initial and continuation), complete rollback and retry, duplicates with preserved provenance, stable event IDs, concurrent identical/forked writers, stale expectations, gaps/regression, hash/parent conflicts, uint64 maximum height, recovery through a fresh pool, cancellation during lock contention, and runtime permission denial. Ambiguous outcomes are injected around a real PostgreSQL COMMIT, both before and after it, followed by a resolving retry. This deterministically tests acknowledgement loss semantics; it is not a network fault proxy or machine power-loss test.
 
