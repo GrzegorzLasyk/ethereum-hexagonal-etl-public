@@ -8,6 +8,8 @@ Stage 2 adds local PostgreSQL, isolated service schemas, migration credentials a
 
 Stage 3 adds Extractor domain rules, ports, and a single-block extraction use case tested with in-memory fakes. It is not wired into the executable until real adapters are implemented in their planned stages. See [ADR 0002](docs/adr/0002-ethereum-source-data.md) for the source dataset and durable processing boundary.
 
+Stage 4 adds the Extractor's Ethereum JSON-RPC outbound adapter, controlled HTTP tests, and an optional Infura Mainnet smoke test. It returns complete source snapshots through `BlockSource`; the executable still does not run extraction or persist data.
+
 The approved MVP uses gRPC with Protocol Buffers for transport and service-owned PostgreSQL schemas with transactional outbox/inbox storage for durable, at-least-once handoff. A receiver will acknowledge an event only after its inbox transaction commits. See [ADR 0001](docs/adr/0001-mvp-transport-and-storage.md), [PLAN.md](PLAN.md), and [AGENTS.md](AGENTS.md) for decisions and staged implementation.
 
 ## Prerequisites
@@ -95,6 +97,14 @@ services/
       ports/outbound/extraction.go
       usecases/extract_block.go
       usecases/extract_block_test.go
+    internal/adapters/outbound/jsonrpc/
+      client.go
+      decode.go
+      fields.go
+      client_test.go
+      protocol_test.go
+      live_test.go
+      testdata/
     internal/config/config.go
     internal/config/config_test.go
   transformer-service/
@@ -125,7 +135,7 @@ Dependencies point inward: adapters depend on application contracts; application
 
 Construct `usecases.NewExtractBlock(chainID, startBlock, source, store)` with an explicit chain ID and starting height. It implements the inbound `BlockExtractor` port. Requests carry `ChainID` and `Number`; chain IDs are canonical decimal strings, not RPC hex strings. There is no default network/provider and no new CLI command at this stage.
 
-The source port verifies chain identity and returns one complete `domain.Extraction`: block identity/header metadata, ordered transaction and receipt membership, receipt logs, raw block and receipt bytes, provider label, and extraction time. The raw block contains full transaction objects. Full field normalization belongs to Transformer; RPC parsing and raw-to-metadata consistency checks belong to the future source adapter. The domain does not parse JSON. The exact acquisition fields, historical optionality, and trace exclusion are recorded in ADR 0002.
+The source port verifies chain identity and returns one complete `domain.Extraction`: block identity/header metadata, ordered transaction and receipt membership, receipt logs, raw block and receipt bytes, provider label, and extraction time. The raw block contains full transaction objects. Full field normalization belongs to Transformer; RPC parsing and raw-to-metadata consistency checks belong to the Stage 4 source adapter. The domain does not parse JSON. The exact acquisition fields, historical optionality, and trace exclusion are recorded in ADR 0002.
 
 `ExtractBlock` validates the request, source chain, checkpoint position, source completeness, and parent/hash continuity. With no checkpoint it accepts only the configured starting height; otherwise it accepts the immediate child or a retry of the checkpoint height. A different hash at that height, a parent mismatch, a gap, or an older request returns an error. Detection does not choose a new canonical chain or repair a reorganization.
 
@@ -140,11 +150,65 @@ Unit tests cover complete and empty blocks, invalid/missing metadata, wrong chai
 ```sh
 gofmt -w services/*/cmd/*/*.go services/*/internal/config/*.go
 gofmt -w services/extractor-service/internal/domain/*.go services/extractor-service/internal/application/ports/inbound/*.go services/extractor-service/internal/application/ports/outbound/*.go services/extractor-service/internal/application/usecases/*.go
+gofmt -w services/extractor-service/internal/adapters/outbound/jsonrpc/*.go
 go test ./...
 go vet ./...
 ```
 
 Also run the three build commands above. Alongside the Extractor tests described above, unit tests cover default, supported, normalized, and invalid log-level configuration for each service. Entry-point and port-only packages have no unit tests of their own; process startup and signal shutdown can be checked using the built binaries. The Go unit tests require neither a live Ethereum provider nor database/Docker access; they do not establish full-pipeline behavior coverage.
+
+## Ethereum JSON-RPC source (Stage 4)
+
+The adapter in `services/extractor-service/internal/adapters/outbound/jsonrpc` implements the existing `BlockSource` port. `Block(ctx, number)` verifies `eth_chainId`, calls `eth_getBlockByNumber` with full transactions, retrieves each transaction's receipt with `eth_getTransactionReceipt`, validates its logs, and rechecks the chain. Receipts/logs are fetched separately from the block; no additional `eth_getLogs` scan is needed. Successful acquisition returns exact raw JSON result bytes plus typed identity metadata. It performs no database writes or checkpoint updates.
+
+Construct it with `jsonrpc.New(config, httpClient)` inside the Extractor service boundary; `nil` uses a standard HTTP client. The constructor validates all settings. The current binary loads only `LOG_LEVEL`; it does not consume RPC environment variables or invoke the adapter. Stage 4 does not add fake persistence to make the executable appear functional.
+
+| `jsonrpc.Config` field | Meaning / constraint |
+| --- | --- |
+| `URL` | Secret-bearing endpoint; HTTPS required except loopback HTTP for tests; userinfo and fragments rejected, redirects disabled |
+| `ChainID` | Explicit canonical decimal ID; use `"1"` for Ethereum Mainnet |
+| `Provider` | Non-secret provenance label, e.g. `infura-mainnet`; 1–64 letters, digits, underscores, dots or hyphens, starting with a letter/digit |
+| `RequestTimeout` | Positive timeout per attempt, including response body reads |
+| `MaxAttempts` | Positive total attempts per RPC call, including the first |
+| `InitialBackoff`, `MaxBackoff` | Positive initial exponential delay and ceiling; equal jitter, ceiling at least initial delay |
+| `MinRequestInterval` | Nonnegative pacing interval across all requests/retries on this client; zero disables pacing |
+| `MaxResponseBytes` | Positive maximum bytes per HTTP response, including the envelope/error body; less than MaxInt64 |
+| `MaxSnapshotBytes` | Maximum combined raw block and receipt result bytes; at least `MaxResponseBytes` |
+
+There are no implicit network or resource-budget defaults. Supply a caller context deadline for the whole block as well as the per-attempt timeout. Response limits apply to bytes read from the HTTP client (decompressed for standard automatic gzip handling). Aggregate limits bound retained raw results, not exact heap usage. Oversize, malformed, missing, or conflicting data fails the whole snapshot; no truncated/partial extraction is returned.
+
+Retries cover transport failures/timeouts, HTTP 408/429/500/502/503/504, and RPC codes 429/-32005. Other responses, including authentication failures and Infura daily-credit exhaustion (402), fail immediately. Retry delays use exponential backoff with jitter. A valid `Retry-After` is respected within `MaxBackoff`; a longer server delay returns the error immediately for later rescheduling. Request pacing is per client, not account-wide credit accounting. See [Infura rate limits](https://docs.infura.io/how-to/avoid-rate-limiting/) and [credit costs](https://docs.infura.io/get-started/pricing/credit-cost/).
+
+### Secure Infura configuration and optional live test
+
+Create an Infura Ethereum Mainnet endpoint using the [official setup guide](https://docs.infura.io/get-started/infura/). Its URL has the form `https://mainnet.infura.io/v3/<YOUR-API-KEY>`. Store the complete URL privately in `ETHEREUM_RPC_URL`, using a secret store, IDE private environment, or the ignored local `.env` file (mode 600). Do not put a real URL in tracked files, command history, logs, or screenshots. Do not enable shell tracing while loading secrets. Errors deliberately omit URLs, provider message text and response bodies; never log the `Config` value or an HTTP client's request dump. Use a non-secret provider label.
+
+The live test is excluded from ordinary tests by the `live` build tag. It requires an explicit decimal `ETHEREUM_SMOKE_BLOCK` and expects chain ID 1. It uses provider credits and reads one block; it writes no snapshot to disk or database. Select a mined historical block sufficiently behind the head for a manual check; this does not define the future service's finality policy.
+
+If using your own trusted `.env` file, set the two placeholders from `.env.example`, then load them in a subshell and run:
+
+```sh
+(
+  set -a
+  . ./.env
+  set +a
+  go test -tags live -run '^TestLiveMainnetBlock$' -count=1 -timeout=3m -v ./services/extractor-service/internal/adapters/outbound/jsonrpc
+)
+```
+
+Sourcing executes shell syntax; use only your own file with correctly quoted values. No `.env` file is loaded automatically by the test. Missing URL skips it; a missing/invalid block fails when a URL is supplied. The test prints only block identity and transaction/receipt counts. Test-only budgets are 15 seconds per request, 3 attempts, 500 ms initial/5 s maximum backoff, 200 ms pacing, 8 MiB per response, 64 MiB per raw snapshot, and a 2-minute overall deadline. A large block or restricted account can exceed these budgets; such failure is not a successful partial extraction. Production values remain an explicit deployment decision.
+
+Compile the opt-in test without contacting a provider:
+
+```sh
+go test -tags live -run '^$' ./services/extractor-service/internal/adapters/outbound/jsonrpc
+```
+
+### Coverage and limitations
+
+Ordinary tests use `httptest` and synthetic fixtures; they need local loopback sockets but no external network or secrets. They cover full/empty blocks, transaction types 0–4, historical receipts, raw byte preservation, metadata consistency, wrong/changing chains, malformed envelopes, duplicate JSON keys, null data, rate limits, bounded retries, cancellation/timeouts, response/snapshot limits, redirect prevention, credential redaction, and concurrent request pacing/IDs.
+
+Receipt calls are sequential and unbatched: `N + 3` RPC calls per block before retries, plus the use case's own chain check. No archive entitlement or throughput is assumed. Unknown fields are retained; unknown transaction types fail explicitly. Fork-dependent fields are checked when present and where implied by transaction type; there is no complete fork-activation calendar. Validation checks source shape and consistency, not signatures, header/trie roots, or consensus. Conflicting receipt/log hashes fail, but a consistent snapshot is not proof of finality or continued canonicality. Reorg reconciliation, durable storage, outbox/gRPC delivery, and range/follow-head workers belong to later stages.
 
 ## Local PostgreSQL (Stage 2)
 
