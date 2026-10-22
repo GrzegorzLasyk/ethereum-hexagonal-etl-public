@@ -54,7 +54,8 @@ integers, fixed-width hashes, times and borrowed immutable payload buffers.
 Passing a nil acceptor creates the Stage 6 skeleton: valid calls return
 `Unimplemented`. Stage 7 wires the Transformer executable to a PostgreSQL acceptance use case and
 a loopback listener; see [Transformer operation](../../README.md#transformer-operation-stage-7).
-Loader remains a lifecycle skeleton until its own persistence stage.
+Stage 8 likewise wires the Loader to its durable Inbox and loopback listener;
+see [Loader operation](../../README.md#loader-operation-stage-8).
 
 An implementation must commit the incoming event to its own Inbox before
 returning `DurablyAccepted` or `AlreadyAccepted` with the matching event ID.
