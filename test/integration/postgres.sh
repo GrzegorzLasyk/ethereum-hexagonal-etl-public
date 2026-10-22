@@ -53,8 +53,8 @@ cleanup() {
 trap cleanup EXIT
 
 for service in "${services[@]}"; do
-    expected_migrations=1
-    if [[ "$service" == extractor || "$service" == transformer ]]; then expected_migrations=2; fi
+    expected_migrations=2
+    if [[ "$service" == loader ]]; then expected_migrations=3; fi
     migrate "$service"
     before=$(sql "${service}_migrator" \
         "SELECT version || checksum || applied_at::text FROM $service.schema_migrations ORDER BY version")
@@ -180,6 +180,8 @@ for service in "${services[@]}"; do
         expected_tables=extraction_checkpoints,outbox_events,raw_blocks,schema_migrations
     elif [[ "$service" == transformer ]]; then
         expected_tables=inbox_events,outbox_events,schema_migrations,transformed_blocks
+    elif [[ "$service" == loader ]]; then
+        expected_tables=blocks,inbox_events,logs,receipts,schema_migrations,transactions
     fi
     assert_value "${service}_migrator" \
         "SELECT string_agg(tablename, ',' ORDER BY tablename) FROM pg_tables WHERE schemaname = '$service'" "$expected_tables"

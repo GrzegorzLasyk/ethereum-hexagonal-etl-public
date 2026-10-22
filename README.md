@@ -2,7 +2,7 @@
 
 An incrementally developed Ethereum ETL system in Go, with independently bounded Extractor, Transformer, and Loader services using Hexagonal Architecture.
 
-Stage 1 introduced three executable service skeletons with environment configuration, structured logs, and signal-driven shutdown. Extractor and Loader still use those lifecycle skeletons; Transformer now runs the Stage 7 workflow described below.
+Stage 1 introduced three executable service skeletons with environment configuration, structured logs, and signal-driven shutdown. Extractor still uses its lifecycle skeleton; Transformer and Loader now run their persistence workflows described below.
 
 Stage 2 adds local PostgreSQL, isolated service schemas, migration credentials and tooling, and database permission tests.
 
@@ -14,7 +14,9 @@ Stage 5 adds Extractor-owned PostgreSQL storage for raw snapshots, outbox intent
 
 Stage 6 adds versioned protobuf contracts, reproducible generation, and inbound gRPC receiver adapters for Transformer and Loader. Service-owned application ports contain only plain Go types. A receiver constructed without an acceptance implementation returns `Unimplemented`. See [contracts, generation and limits](docs/architecture/protobuf-contracts.md).
 
-Stage 7 wires the Transformer gRPC receiver to a durable PostgreSQL Inbox and bounded processing workers. Valid source data becomes a deterministic JSON v1 document and an Outbox intent in one local transaction. Duplicate acceptance, retries and restart recovery work without Loader availability. No outgoing dispatcher or Loader persistence is implemented. See [Transformer operation](#transformer-operation-stage-7) and [data/recovery semantics](docs/architecture/transformer-stage7.md).
+Stage 7 wires the Transformer gRPC receiver to a durable PostgreSQL Inbox and bounded processing workers. Valid source data becomes a deterministic JSON v1 document and an Outbox intent in one local transaction. Duplicate acceptance, retries and restart recovery work without Loader availability. No outgoing dispatcher is implemented in Stage 7. See [Transformer operation](#transformer-operation-stage-7) and [data/recovery semantics](docs/architecture/transformer-stage7.md).
+
+Stage 8 adds Loader-owned durable Inbox acceptance, leased processing workers and atomic normalized block/transaction/receipt/log persistence. Competing block versions are retained with explicit conflict observations; all versions have unknown canonicality ([ADR 0003](docs/adr/0003-loader-conflict-observation.md)). See [Loader operation](#loader-operation-stage-8) and [data/recovery semantics](docs/architecture/loader-stage8.md).
 
 The approved MVP uses gRPC with Protocol Buffers for transport and service-owned PostgreSQL schemas with transactional outbox/inbox storage for durable, at-least-once handoff. A receiver will acknowledge an event only after its inbox transaction commits. See [ADR 0001](docs/adr/0001-mvp-transport-and-storage.md), [PLAN.md](PLAN.md), and [AGENTS.md](AGENTS.md) for decisions and staged implementation.
 
@@ -51,9 +53,9 @@ go run ./services/transformer-service/cmd/transformer
 go run ./services/loader-service/cmd/loader
 ```
 
-Each service validates configuration and writes JSON logs to stderr. Transformer additionally requires its database settings and applied migrations below. Stop a service with Ctrl+C (SIGINT) or send SIGTERM to the service process. Both signals cause a shutdown log and exit status 0. Invalid configuration causes a JSON error log and exit status 1 before startup.
+Each service validates configuration and writes JSON logs to stderr. Transformer and Loader additionally require their database settings and applied migrations below. Stop a service with Ctrl+C (SIGINT) or send SIGTERM to the service process. Both signals cause a shutdown log and exit status 0. Invalid configuration causes a JSON error log and exit status 1 before startup.
 
-Services can start independently in any order; Transformer requires PostgreSQL but not Loader. It cancels and joins its workers, drains incoming RPCs within a configured grace period, and closes the pool. Interrupted processing remains recoverable through persisted leases. Use the service paths above instead of `go run .`.
+Services can start independently in any order; Transformer and Loader require PostgreSQL but do not require each other online. Both cancel and join their workers, drain incoming RPCs within a configured grace period, and close their pools. Interrupted processing remains recoverable through persisted leases. Use the service paths above instead of `go run .`.
 
 ## Configuration
 
@@ -63,7 +65,7 @@ Each service loads its own configuration from the environment at startup; `.env`
 | --- | --- | --- | --- |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARN`, `ERROR` | Minimum severity for JSON logs on stderr |
 
-Log levels are case-insensitive and surrounding whitespace is ignored. Empty or whitespace-only values select `INFO`; other values fail startup. Lifecycle messages have INFO severity and are suppressed at WARN or ERROR. Every log includes the service name. Extractor and Loader skeletons need no provider/database settings; Transformer configuration is documented below.
+Log levels are case-insensitive and surrounding whitespace is ignored. Empty or whitespace-only values select `INFO`; other values fail startup. Lifecycle messages have INFO severity and are suppressed at WARN or ERROR. Every log includes the service name. The Extractor skeleton needs no provider/database settings; Transformer and Loader configuration is documented below.
 
 ```sh
 LOG_LEVEL=DEBUG ./bin/extractor-service
@@ -71,7 +73,7 @@ LOG_LEVEL=DEBUG ./bin/extractor-service
 
 ## Stage 1 health checks
 
-For Extractor and Loader skeletons, health verification means process liveness only: with `LOG_LEVEL=INFO`, check the `service skeleton started` log (including `etl_enabled=false`), verify the process remains alive, and confirm it exits cleanly on SIGINT or SIGTERM. Transformer logs `transformer started` after checking its database role and opening its listener, then logs Inbox progress. This is not an end-to-end readiness check. No HTTP/gRPC health endpoint or background health polling is implemented.
+For the Extractor skeleton, health verification means process liveness only: with `LOG_LEVEL=INFO`, check the `service skeleton started` log (including `etl_enabled=false`), verify the process remains alive, and confirm it exits cleanly on SIGINT or SIGTERM. Transformer and Loader log `transformer started` / `loader started` after checking their database role and opening a listener, then log Inbox progress. This is not an end-to-end readiness check. No HTTP/gRPC health endpoint or background health polling is implemented.
 
 For a manual SIGTERM smoke check, start a built binary in the background, confirm its startup log and running PID, then stop that PID:
 
@@ -132,17 +134,20 @@ services/
     internal/config/
   loader-service/
     cmd/loader/main.go
-    internal/application/ports/inbound/accept_block.go
+    internal/domain/
+    internal/application/ports/inbound/
+    internal/application/ports/outbound/
+    internal/application/usecases/
     internal/adapters/inbound/grpc/
-      receiver.go
-      receiver_test.go
-    internal/config/config.go
-    internal/config/config_test.go
+    internal/adapters/inbound/worker/
+    internal/adapters/outbound/jsondocument/
+    internal/adapters/outbound/postgres/
+    internal/config/
 ```
 
 Each `main.go` is a composition root for its service: it loads configuration, constructs its logger, and manages process cancellation. Each service owns its `internal/` packages; services do not import one another's internals. The small configuration implementations remain service-owned so their settings can evolve independently.
 
-Extractor and Transformer use the domain, application ports, and use-case boundaries below. Other packages are introduced only when their planned functionality needs them:
+All three services use the domain, application ports, and use-case boundaries below. Other packages are introduced only when their planned functionality needs them:
 
 - `internal/domain/`: pure entities, invariants, value objects, and domain errors, independent of infrastructure.
 - `internal/application/ports/inbound/`: interfaces exposing application capabilities to inbound adapters.
@@ -213,6 +218,48 @@ go test -tags postgresintegration -race -run '^TestPostgresIntegration$' -count=
 It privately supplies `TRANSFORMER_TEST_DATABASE_URL`, `TRANSFORMER_TEST_MIGRATOR_URL` and `TRANSFORMER_TEST_ISOLATED=1`. Tagged tests skip without URLs and refuse a configured database without the isolation marker. They truncate disposable Transformer tables and install temporary failure triggers; never point them at needed data. Cleanup removes only the runner's project/volume and credential file, including on cancellation. For supervisors signaling one PID, build/run the runner binary directly, as described for Extractor below.
 
 Database coverage includes durable ACK, exact-byte duplicates/conflicts, concurrent claims, expired leases/fencing, restart, poison input, retry scheduling/exhaustion, rollback, ambiguous commits, permissions and cancellation. Fixture tests cover deterministic decimal-string output, transaction types 0–4, access lists, blob/authorization fields, historical roots, null/absent fields, empty arrays and malformed/incomplete data. Worker tests cover concurrency bounds, deadlines, polling and joined shutdown.
+
+## Loader operation (Stage 8)
+
+Apply all Loader migrations, including `0002_inbox_normalized_storage.sql` and
+`0003_conflict_observations.sql`, through the existing
+migration runner (`dc run --rm migrate-loader` after defining `dc` below).
+Configure a private `LOADER_DATABASE_URL` for `loader_runtime` in `ethereum_etl`
+and explicitly set `LOADER_CHAIN_ID=1` for the approved Mainnet source:
+
+```sh
+# LOADER_DATABASE_URL is supplied privately through the environment.
+export LOADER_CHAIN_ID=1
+go run ./services/loader-service/cmd/loader
+```
+
+Loader listens on `127.0.0.1:50052` by default. It durably accepts transformed
+JSON v1 before ACK, then validates and atomically writes normalized query records
+and Inbox completion. Exact duplicates retain the first content; conflicting
+content under the same event ID is rejected. Invalid semantic payloads remain
+in failed Inbox state. No service sender or Stage 9 dispatch is implemented.
+
+Different hashes at the same chain/height retain separate blocks and child records.
+Every competing version has `height_conflict=true` and `canonical_status='unknown'`.
+Successful Inbox completion and a matching parent do not establish canonicality.
+Extractor currently rejects competing hashes; Loader preserves conflicting
+observations. Neither service automatically reconciles reorganizations.
+
+[Loader documentation](docs/architecture/loader-stage8.md) lists all `LOADER_*`
+configuration settings, schema types, permission boundaries, restart semantics
+and limitations. The Go executable does not load Compose's `.env` or migrate.
+
+```sh
+go test ./...
+go test -race ./services/loader-service/...
+go vet ./...
+# Docker Engine/Desktop and Compose required; uses its own disposable database:
+go run ./test/integration/cmd/loader-postgres
+```
+
+The runner applies and verifies all service migrations and permissions, runs
+Loader PostgreSQL tests with `-race`, then removes its own resources. It supplies
+private `LOADER_TEST_*` settings; never point those tests at needed data.
 
 ## Single-block extraction contract (Stage 3)
 
@@ -391,7 +438,7 @@ cp -n .env.example .env
 chmod 600 .env
 ```
 
-Fill in the seven password values with distinct, nonempty local secrets. The example intentionally leaves passwords empty, so Compose refuses to start until they are set. `.env` and `.env.*` are ignored by Git; only `.env.example` is tracked. Do not commit generated credentials. Compose reads this file; Transformer separately requires its process environment settings above.
+Fill in the seven password values with distinct, nonempty local secrets. The example intentionally leaves passwords empty, so Compose refuses to start until they are set. `.env` and `.env.*` are ignored by Git; only `.env.example` is tracked. Do not commit generated credentials. Compose reads this file; Transformer and Loader separately require their process environment settings above.
 
 | Variable | Used for |
 | --- | --- |
@@ -430,7 +477,7 @@ The first-volume bootstrap runs as the PostgreSQL administrator to create the si
 
 All six service logins have no superuser, role/database creation, replication, bypass-RLS, inherited membership, or membership in other service roles. Database-level PUBLIC privileges and PUBLIC access to the `public` schema are revoked. Service roles receive CONNECT, but no database CREATE or TEMP privileges. The migrator owns only its service schema. Runtime receives USAGE on its own schema and no CREATE, ownership, or access to migration metadata. Neither role can access another service's schema or assume its roles. PostgreSQL system catalog visibility is not a promise of metadata secrecy; the isolation boundary protects service objects and data.
 
-There are no blanket runtime table grants. Stages 5 and 7 grant only the documented operations on Extractor and Transformer tables; future service-owned migrations must likewise grant operations explicitly. New functions and types do not receive PUBLIC access by default. The global default revokes are intentional: schema-local revokes cannot remove privileges granted globally. See the [PostgreSQL default-privilege documentation](https://www.postgresql.org/docs/17/sql-alterdefaultprivileges.html).
+There are no blanket runtime table grants. Stages 5, 7 and 8 grant only the documented operations on service-owned tables; future service-owned migrations must likewise grant operations explicitly. New functions and types do not receive PUBLIC access by default. The global default revokes are intentional: schema-local revokes cannot remove privileges granted globally. See the [PostgreSQL default-privilege documentation](https://www.postgresql.org/docs/17/sql-alterdefaultprivileges.html).
 
 ### Apply migrations
 
@@ -464,7 +511,7 @@ dc run --rm verify
 
 This Stage 2 integration suite uses actual authenticated TCP connections, with no administrator password. It verifies all six roles, schema ownership, database restrictions, cross-schema read/write/DDL denial, blocked role escalation, runtime DDL and migration-metadata denial, explicit own-schema CRUD grants, sequence/function isolation, and rejection of wrong passwords. It also checks repeated/concurrent migrations, checksum mismatch rejection, and transaction rollback on an intentionally failing migration batch.
 
-The test temporarily creates uniquely named probe tables/functions, grants narrowly scoped probe access, and removes these objects on exit. It uses temporary copies of migration files for failure tests and does not edit committed migrations. Run it on the local development database, not production: its final assertion checks the exact current inventory (migration metadata plus the three Extractor and three Transformer tables). A forcibly killed test may require cleanup of its `stage2_probe_*` objects by the owning migrator.
+The test temporarily creates uniquely named probe tables/functions, grants narrowly scoped probe access, and removes these objects on exit. It uses temporary copies of migration files for failure tests and does not edit committed migrations. Run it on the local development database, not production: its final assertion checks the exact current inventory (migration metadata plus the three Extractor, three Transformer and five Loader tables). A forcibly killed test may require cleanup of its `stage2_probe_*` objects by the owning migrator.
 
 To verify persistence across container replacement, after a successful test:
 
