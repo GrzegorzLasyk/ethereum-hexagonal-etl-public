@@ -52,8 +52,9 @@ The acceptor is the service-owned `RawBlockAcceptor` or
 `TransformedBlockAcceptor` inbound application port. It uses plain Go strings,
 integers, fixed-width hashes, times and borrowed immutable payload buffers.
 Passing a nil acceptor creates the Stage 6 skeleton: valid calls return
-`Unimplemented`. Executables remain unchanged, with no gRPC listener or new
-environment settings. Later composition roots wire a real acceptance use case.
+`Unimplemented`. Stage 7 wires the Transformer executable to a PostgreSQL acceptance use case and
+a loopback listener; see [Transformer operation](../../README.md#transformer-operation-stage-7).
+Loader remains a lifecycle skeleton until its own persistence stage.
 
 An implementation must commit the incoming event to its own Inbox before
 returning `DurablyAccepted` or `AlreadyAccepted` with the matching event ID.
