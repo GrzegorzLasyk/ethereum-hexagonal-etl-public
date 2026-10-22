@@ -8,6 +8,8 @@ import (
 )
 
 func TestLoad(t *testing.T) {
+	t.Setenv("EXTRACTOR_DATABASE_URL", "postgres://placeholder")
+	t.Setenv("EXTRACTOR_CHAIN_ID", "1")
 	tests := []struct {
 		name    string
 		value   string

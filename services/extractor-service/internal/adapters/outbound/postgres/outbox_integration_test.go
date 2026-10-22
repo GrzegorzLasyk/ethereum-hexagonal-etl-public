@@ -1,0 +1,280 @@
+//go:build postgresintegration
+
+package postgres
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"reflect"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/application/ports/outbound"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+type deliveryFaultDB struct {
+	database
+	after bool
+}
+
+func (d deliveryFaultDB) BeginTx(c context.Context, o pgx.TxOptions) (pgx.Tx, error) {
+	tx, e := d.database.BeginTx(c, o)
+	if e != nil {
+		return nil, e
+	}
+	return deliveryFaultTx{tx, d.after}, nil
+}
+
+type deliveryFaultTx struct {
+	pgx.Tx
+	after bool
+}
+
+func (tx deliveryFaultTx) Commit(c context.Context) error {
+	if tx.after {
+		if e := tx.Tx.Commit(c); e != nil {
+			return e
+		}
+	}
+	return errors.New("lost local commit response")
+}
+func testOutbox(t *testing.T, runtime, owner *pgxpool.Pool) {
+	ctx := t.Context()
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, e := owner.Exec(ctx, q, args...); e != nil {
+			t.Fatal(e)
+		}
+	}
+	clear := func() { exec("TRUNCATE extractor.raw_blocks CASCADE") }
+	seed := func() string {
+		t.Helper()
+		s, e := New(runtime, "1", 42)
+		if e != nil {
+			t.Fatal(e)
+		}
+		value := snapshot("1", 42, 2, 1)
+		value.Provider = "fixture"
+		if _, e = s.Commit(ctx, outbound.CommitExtraction{Extraction: value}); e != nil {
+			t.Fatal(e)
+		}
+		return value.Header.ID.EventID()
+	}
+	fresh := func() *Outbox {
+		t.Helper()
+		s, e := NewOutbox(runtime, "1", time.Minute, 3)
+		if e != nil {
+			t.Fatal(e)
+		}
+		return s
+	}
+	claim := func(s *Outbox) outbound.Delivery {
+		t.Helper()
+		item, e := s.ClaimDelivery(ctx)
+		if e != nil || item == nil {
+			t.Fatal("claim", e)
+		}
+		return *item
+	}
+	state := func(id, want string) {
+		t.Helper()
+		var got string
+		if e := runtime.QueryRow(ctx, "SELECT status FROM extractor.outbox_events WHERE event_id=$1", id).Scan(&got); e != nil || got != want {
+			t.Fatalf("status=%s want=%s err=%v", got, want, e)
+		}
+	}
+	expire := func() {
+		exec("UPDATE extractor.outbox_events SET lease_until=clock_timestamp()-interval '1 second' WHERE status='sending'")
+	}
+	t.Run("exclusive concurrent claim exact persisted publication and delivered replay", func(t *testing.T) {
+		clear()
+		id := seed()
+		s := fresh()
+		items := make(chan *outbound.Delivery, 8)
+		errs := make(chan error, 8)
+		var wg sync.WaitGroup
+		for range 8 {
+			wg.Go(func() { i, e := s.ClaimDelivery(ctx); items <- i; errs <- e })
+		}
+		wg.Wait()
+		close(items)
+		close(errs)
+		for e := range errs {
+			if e != nil {
+				t.Fatal(e)
+			}
+		}
+		var item outbound.Delivery
+		n := 0
+		for i := range items {
+			if i != nil {
+				n++
+				item = *i
+			}
+		}
+		if n != 1 || item.Event.EventID != id {
+			t.Fatal("claim overlap", n)
+		}
+		original := snapshot("1", 42, 2, 1)
+		if !bytes.Equal(item.Event.RawBlock, original.RawBlock) || !reflect.DeepEqual(item.Event.RawReceipts, original.RawReceipts) || !item.Event.ExtractedAt.Equal(original.ExtractedAt) {
+			t.Fatal("source bytes/provenance changed")
+		}
+		other, e := NewOutbox(runtime, "2", time.Minute, 3)
+		if e != nil {
+			t.Fatal(e)
+		}
+		if i, e := other.ClaimDelivery(ctx); e != nil || i != nil {
+			t.Fatal("cross-chain claim", i, e)
+		}
+		if e := s.Published(ctx, item); e != nil {
+			t.Fatal(e)
+		}
+		if e := s.Published(ctx, item); e != nil {
+			t.Fatal("delivered replay", e)
+		}
+		seed()
+		state(id, "delivered")
+		if i, e := s.ClaimDelivery(ctx); e != nil || i != nil {
+			t.Fatal("delivered event reclaimed")
+		}
+		if e := s.RetryDelivery(ctx, item, outbound.DeliveryFailure{Code: "unavailable"}); !errors.Is(e, outbound.ErrDeliveryLeaseLost) {
+			t.Fatal("failure rewrote delivered event", e)
+		}
+	})
+	t.Run("expired sender cannot complete or fail renewed claim", func(t *testing.T) {
+		clear()
+		id := seed()
+		s := fresh()
+		old := claim(s)
+		expire()
+		if e := s.Published(ctx, old); !errors.Is(e, outbound.ErrDeliveryLeaseLost) {
+			t.Fatal("expired ACK", e)
+		}
+		restarted := fresh()
+		current := claim(restarted)
+		if current.Attempt != old.Attempt+1 || !reflect.DeepEqual(old.Event, current.Event) {
+			t.Fatal("restart changed immutable event")
+		}
+		if e := s.Published(ctx, old); !errors.Is(e, outbound.ErrDeliveryLeaseLost) {
+			t.Fatal(e)
+		}
+		if e := s.RetryDelivery(ctx, old, outbound.DeliveryFailure{Code: "unavailable"}); !errors.Is(e, outbound.ErrDeliveryLeaseLost) {
+			t.Fatal(e)
+		}
+		if e := restarted.Published(ctx, current); e != nil {
+			t.Fatal(e)
+		}
+		state(id, "delivered")
+	})
+	t.Run("backoff exhausted and permanent failures retained", func(t *testing.T) {
+		clear()
+		id := seed()
+		s := fresh()
+		item := claim(s)
+		if e := s.RetryDelivery(ctx, item, outbound.DeliveryFailure{Code: "unavailable", Delay: time.Hour}); e != nil {
+			t.Fatal(e)
+		}
+		state(id, "pending")
+		if i, e := s.ClaimDelivery(ctx); e != nil || i != nil {
+			t.Fatal("ignored backoff")
+		}
+		exec("UPDATE extractor.outbox_events SET next_attempt_at=clock_timestamp()")
+		second := claim(s)
+		if e := s.RetryDelivery(ctx, second, outbound.DeliveryFailure{Code: "unavailable"}); e != nil {
+			t.Fatal(e)
+		}
+		third := claim(s)
+		if third.Attempt != 3 {
+			t.Fatal(third.Attempt)
+		}
+		expire()
+		if i, e := s.ClaimDelivery(ctx); e != nil || i != nil {
+			t.Fatal("exhausted crash reclaimed")
+		}
+		state(id, "failed")
+		clear()
+		id = seed()
+		item = claim(s)
+		if e := s.RetryDelivery(ctx, item, outbound.DeliveryFailure{Code: "conflict", Permanent: true}); e != nil {
+			t.Fatal(e)
+		}
+		state(id, "failed")
+		if i, e := s.ClaimDelivery(ctx); e != nil || i != nil {
+			t.Fatal("permanent failure reclaimed")
+		}
+	})
+	t.Run("ambiguous claim and ACK-state commits recover", func(t *testing.T) {
+		for _, after := range []bool{false, true} {
+			clear()
+			id := seed()
+			s := fresh()
+			faulty := *s
+			faulty.db = deliveryFaultDB{s.db, after}
+			if i, e := faulty.ClaimDelivery(ctx); i != nil || !errors.Is(e, outbound.ErrDeliveryCommitUnknown) {
+				t.Fatal("claim ambiguity", i, e)
+			}
+			if after {
+				state(id, "sending")
+				expire()
+			} else {
+				state(id, "pending")
+			}
+			item := claim(s)
+			if e := faulty.Published(ctx, item); !errors.Is(e, outbound.ErrDeliveryCommitUnknown) {
+				t.Fatal(e)
+			}
+			if after {
+				state(id, "delivered")
+			} else {
+				state(id, "sending")
+			}
+			if e := s.Published(ctx, item); e != nil {
+				t.Fatal("resolve local commit", e)
+			}
+			state(id, "delivered")
+		}
+	})
+	t.Run("leases cancellation pinned retry budget and restricted updates", func(t *testing.T) {
+		clear()
+		id := seed()
+		s := fresh()
+		item := claim(s)
+		changed, e := NewOutbox(runtime, "1", time.Minute, 100)
+		if e != nil {
+			t.Fatal(e)
+		}
+		expire()
+		item = claim(changed)
+		if item.MaxAttempts != 3 {
+			t.Fatal("changed persisted retry budget")
+		}
+		tx, e := owner.Begin(ctx)
+		if e != nil {
+			t.Fatal(e)
+		}
+		defer tx.Rollback(ctx)
+		if _, e = tx.Exec(ctx, "SELECT event_id FROM extractor.outbox_events WHERE event_id=$1 FOR UPDATE", id); e != nil {
+			t.Fatal(e)
+		}
+		c, cancel := context.WithTimeout(ctx, 30*time.Millisecond)
+		defer cancel()
+		if e = s.Published(c, item); !errors.Is(e, context.DeadlineExceeded) {
+			t.Fatal(e)
+		}
+		if e = tx.Rollback(ctx); e != nil {
+			t.Fatal(e)
+		}
+		if e = s.Published(ctx, item); e != nil {
+			t.Fatal("lock leak", e)
+		}
+		for _, q := range []string{"UPDATE extractor.outbox_events SET event_id='changed'", "UPDATE extractor.outbox_events SET created_at=clock_timestamp()", "DELETE FROM extractor.outbox_events", "SELECT * FROM loader.inbox_events"} {
+			if _, e := runtime.Exec(ctx, q); e == nil {
+				t.Fatal("unauthorized", q)
+			}
+		}
+	})
+}

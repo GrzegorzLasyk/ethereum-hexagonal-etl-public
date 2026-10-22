@@ -2,7 +2,7 @@
 
 An incrementally developed Ethereum ETL system in Go, with independently bounded Extractor, Transformer, and Loader services using Hexagonal Architecture.
 
-Stage 1 introduced three executable service skeletons with environment configuration, structured logs, and signal-driven shutdown. Extractor still uses its lifecycle skeleton; Transformer and Loader now run their persistence workflows described below.
+Stage 1 introduced three executable service skeletons with environment configuration, structured logs, and signal-driven shutdown. All three now run the persistence and handoff workflows described below.
 
 Stage 2 adds local PostgreSQL, isolated service schemas, migration credentials and tooling, and database permission tests.
 
@@ -10,7 +10,7 @@ Stage 3 adds Extractor domain rules, ports, and a single-block extraction use ca
 
 Stage 4 adds the Extractor's Ethereum JSON-RPC outbound adapter, controlled HTTP tests, and an optional Infura Mainnet smoke test. It returns complete source snapshots through `BlockSource`; the executable still does not run extraction or persist data.
 
-Stage 5 adds Extractor-owned PostgreSQL storage for raw snapshots, outbox intents, and checkpoints through `ExtractionStore`. The source and storage adapters are individually usable; the executable remains a lifecycle skeleton. Scheduling and outbox dispatch are not implemented.
+Stage 5 adds Extractor-owned PostgreSQL storage for raw snapshots, outbox intents, and checkpoints through `ExtractionStore`. The source and storage adapters are individually usable; Stage 5 itself adds neither acquisition scheduling nor dispatch; Stage 9 wires the dispatcher below.
 
 Stage 6 adds versioned protobuf contracts, reproducible generation, and inbound gRPC receiver adapters for Transformer and Loader. Service-owned application ports contain only plain Go types. A receiver constructed without an acceptance implementation returns `Unimplemented`. See [contracts, generation and limits](docs/architecture/protobuf-contracts.md).
 
@@ -18,11 +18,15 @@ Stage 7 wires the Transformer gRPC receiver to a durable PostgreSQL Inbox and bo
 
 Stage 8 adds Loader-owned durable Inbox acceptance, leased processing workers and atomic normalized block/transaction/receipt/log persistence. Competing block versions are retained with explicit conflict observations; all versions have unknown canonicality ([ADR 0003](docs/adr/0003-loader-conflict-observation.md)). See [Loader operation](#loader-operation-stage-8) and [data/recovery semantics](docs/architecture/loader-stage8.md).
 
+Stage 9 connects Extractor → Transformer → Loader with leased Outbox dispatchers,
+stable IDs and verified durable gRPC ACKs. Deterministic tests cover offline
+recipients, lost ACKs and sender crashes. See [handoff operation](docs/architecture/handoff-stage9.md).
+
 The approved MVP uses gRPC with Protocol Buffers for transport and service-owned PostgreSQL schemas with transactional outbox/inbox storage for durable, at-least-once handoff. A receiver will acknowledge an event only after its inbox transaction commits. See [ADR 0001](docs/adr/0001-mvp-transport-and-storage.md), [PLAN.md](PLAN.md), and [AGENTS.md](AGENTS.md) for decisions and staged implementation.
 
 ## Prerequisites
 
-Use Go 1.27.3 as declared in the root `go.mod`. Run the following commands from the repository root. Stage 1 uses only the standard library and requires no database, Ethereum provider, broker, or Docker environment.
+Use Go 1.27.3 as declared in the root `go.mod`. Run the following commands from the repository root. Ordinary unit tests need no infrastructure. Running services requires migrated PostgreSQL; integration runners require Docker Engine/Desktop and Compose. No live Ethereum provider or broker is needed for deterministic tests.
 
 ## Build
 
@@ -53,9 +57,9 @@ go run ./services/transformer-service/cmd/transformer
 go run ./services/loader-service/cmd/loader
 ```
 
-Each service validates configuration and writes JSON logs to stderr. Transformer and Loader additionally require their database settings and applied migrations below. Stop a service with Ctrl+C (SIGINT) or send SIGTERM to the service process. Both signals cause a shutdown log and exit status 0. Invalid configuration causes a JSON error log and exit status 1 before startup.
+Each service validates configuration and writes JSON logs to stderr. All three require their database settings and applied migrations below. Stop a service with Ctrl+C (SIGINT) or send SIGTERM to the service process. Both signals cause a shutdown log and exit status 0. Invalid configuration causes a JSON error log and exit status 1 before startup.
 
-Services can start independently in any order; Transformer and Loader require PostgreSQL but do not require each other online. Both cancel and join their workers, drain incoming RPCs within a configured grace period, and close their pools. Interrupted processing remains recoverable through persisted leases. Use the service paths above instead of `go run .`.
+Services can start independently in any order; all require PostgreSQL but do not require downstream services online at startup. They cancel and join workers before closing connections/pools; Transformer and Loader also drain incoming RPCs within a configured grace period. Interrupted processing remains recoverable through persisted leases. Use the service paths above instead of `go run .`.
 
 ## Configuration
 
@@ -65,15 +69,15 @@ Each service loads its own configuration from the environment at startup; `.env`
 | --- | --- | --- | --- |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARN`, `ERROR` | Minimum severity for JSON logs on stderr |
 
-Log levels are case-insensitive and surrounding whitespace is ignored. Empty or whitespace-only values select `INFO`; other values fail startup. Lifecycle messages have INFO severity and are suppressed at WARN or ERROR. Every log includes the service name. The Extractor skeleton needs no provider/database settings; Transformer and Loader configuration is documented below.
+Log levels are case-insensitive and surrounding whitespace is ignored. Empty or whitespace-only values select `INFO`; other values fail startup. Lifecycle messages have INFO severity and are suppressed at WARN or ERROR. Every log includes the service name. Every service requires database and chain settings. Extractor/Transformer dispatch configuration is documented in [Stage 9](docs/architecture/handoff-stage9.md).
 
 ```sh
 LOG_LEVEL=DEBUG ./bin/extractor-service
 ```
 
-## Stage 1 health checks
+## Process health checks
 
-For the Extractor skeleton, health verification means process liveness only: with `LOG_LEVEL=INFO`, check the `service skeleton started` log (including `etl_enabled=false`), verify the process remains alive, and confirm it exits cleanly on SIGINT or SIGTERM. Transformer and Loader log `transformer started` / `loader started` after checking their database role and opening a listener, then log Inbox progress. This is not an end-to-end readiness check. No HTTP/gRPC health endpoint or background health polling is implemented.
+For Extractor, check `extractor dispatcher started`, its Outbox progress and clean shutdown on SIGINT/SIGTERM. A started dispatcher does not imply that its recipient is online. Transformer and Loader log `transformer started` / `loader started` after checking their database role and opening a listener, then log Inbox progress. This is not an end-to-end readiness check. No HTTP/gRPC health endpoint or background health polling is implemented.
 
 For a manual SIGTERM smoke check, start a built binary in the background, confirm its startup log and running PID, then stop that PID:
 
@@ -189,7 +193,7 @@ The approved development source is Ethereum Mainnet (`1`). Transformer makes no 
 
 Durations use Go duration syntax, between 1 ms and 24 h. The pool has `workers + 4` connections, a 5 s connect timeout and a 10 s SQL statement timeout. Compose reads `.env`; the Go executable does not. Non-loopback deployment, transport authentication/TLS and full service Compose deployment remain later work.
 
-Owned tables are `transformer.inbox_events`, `transformer.transformed_blocks` and `transformer.outbox_events`. The runtime can update only Inbox processing columns. Status (`pending`, `processing`, `completed`, `failed`), attempts, lease, next attempt and safe error code expose progress. Workers reclaim expired leases after restart; failed input remains retained. Every Outbox row is a pending intent for Stage 9. See [normalized JSON and recovery semantics](docs/architecture/transformer-stage7.md).
+Owned tables are `transformer.inbox_events`, `transformer.transformed_blocks` and `transformer.outbox_events`. The runtime can update only Inbox processing and Outbox delivery columns. Status (`pending`, `processing`, `completed`, `failed`), attempts, lease, next attempt and safe error code expose progress. Workers reclaim expired leases after restart; failed input remains retained. Stage 9 dispatches these intents and records delivery status. See [normalized JSON and recovery semantics](docs/architecture/transformer-stage7.md).
 
 ### Transformer verification
 
@@ -237,7 +241,7 @@ Loader listens on `127.0.0.1:50052` by default. It durably accepts transformed
 JSON v1 before ACK, then validates and atomically writes normalized query records
 and Inbox completion. Exact duplicates retain the first content; conflicting
 content under the same event ID is rejected. Invalid semantic payloads remain
-in failed Inbox state. No service sender or Stage 9 dispatch is implemented.
+in failed Inbox state. Stage 9 now connects this receiver to the Transformer dispatcher.
 
 Different hashes at the same chain/height retain separate blocks and child records.
 Every competing version has `height_conflict=true` and `canonical_status='unknown'`.
@@ -260,6 +264,28 @@ go run ./test/integration/cmd/loader-postgres
 The runner applies and verifies all service migrations and permissions, runs
 Loader PostgreSQL tests with `-race`, then removes its own resources. It supplies
 private `LOADER_TEST_*` settings; never point those tests at needed data.
+
+## Reliable handoff operation (Stage 9)
+
+Apply all service migrations, including the new Extractor/Transformer
+`0003_outbox_delivery.sql`. Extractor now requires private `EXTRACTOR_DATABASE_URL`
+(`extractor_runtime` in `ethereum_etl`) and explicit `EXTRACTOR_CHAIN_ID=1`.
+Transformer and Loader keep their existing runtime database/chain settings.
+
+Default targets are `EXTRACTOR_DISPATCH_TARGET=127.0.0.1:50051` and
+`TRANSFORMER_DISPATCH_TARGET=127.0.0.1:50052`. Configure compatible payload limits.
+Each sender defaults to one worker, 20 attempts, a 5 s RPC timeout and a 1 min
+lease. See [all dispatch settings, transaction boundaries and backlog queries](docs/architecture/handoff-stage9.md).
+
+Start Loader, Transformer and Extractor in separate terminals; other orders also
+work within retry budgets. Extractor dispatches already-committed snapshots;
+continuous acquisition remains Stage 10. Failed events stay retained and are not
+reset by restart. No replay tool or canonical-chain reconciliation is added.
+
+```sh
+# Isolated deterministic handoff test, including database and gRPC failures:
+go run ./test/integration/cmd/handoff-postgres
+```
 
 ## Single-block extraction contract (Stage 3)
 
@@ -354,7 +380,7 @@ Reapplication is safe through the existing checksum/version runner; do not execu
 | Extractor table | Stored data and access |
 | --- | --- |
 | `raw_blocks` | Full identity `(chain_id, block_number, block_hash)`, parent hash, exact raw block bytes and ordered raw receipt bytes, versioned typed metadata, provider and original extraction time. Runtime: SELECT/INSERT only. |
-| `outbox_events` | Stable `raw-block/v1/<chain>/<number>/<hash>` event ID and a foreign key to the immutable local snapshot, plus creation time. Runtime: SELECT/INSERT only. Every row is a pending intent. |
+| `outbox_events` | Stable `raw-block/v1/<chain>/<number>/<hash>` event ID and a foreign key to the immutable local snapshot, plus creation time. Runtime: SELECT/INSERT and restricted delivery-state UPDATE. Stage 9 records leases, retries and durable ACKs. |
 | `extraction_checkpoints` | One last committed block identity per configured chain and update time, with foreign keys to both the source snapshot and outbox intent. Runtime: SELECT/INSERT and UPDATE of position/hash/time only. |
 
 Raw JSON is stored in `bytea` / ordered `bytea[]`, preserving whitespace, unknown fields, and numeric spelling. Only adapter-owned typed metadata uses versioned `jsonb`. Source extraction time is RFC3339Nano text so PostgreSQL's microsecond timestamp precision cannot discard its nanoseconds; database write times use `timestamptz`. Heights use bounded `numeric(20,0)` to retain the port's complete uint64 range. Chain IDs remain canonical decimal text. Primary/unique indexes support identity, height, event and checkpoint lookup; there are no speculative delivery-state indexes.
