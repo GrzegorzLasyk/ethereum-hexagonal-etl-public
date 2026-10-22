@@ -1,5 +1,9 @@
 # Loader Inbox and normalized persistence (Stage 8)
 
+This document records its stage's persistence boundary. [Stage 9](handoff-stage9.md)
+now adds Outbox transmission and executable dispatch wiring; earlier statements
+about deferred dispatch describe the original stage scope.
+
 Status: implemented, including the accepted conflict observation policy in ADR 0003.
 
 Loader owns its domain, acceptance/processing use cases, ports, JSON decoder,

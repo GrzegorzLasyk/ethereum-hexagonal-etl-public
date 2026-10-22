@@ -70,7 +70,7 @@ There is no post-ACK asynchronous in-memory queue.
 
 | Status | Meaning and sender action |
 | --- | --- |
-| `OK` plus positive acceptance and matching event ID | Inbox durable, possibly a duplicate; not proof of transformation/loading. A future dispatcher may mark delivery acknowledged. |
+| `OK` plus positive acceptance and matching event ID | Inbox durable, possibly a duplicate; not proof of transformation/loading. Stage 9 may mark delivery acknowledged. |
 | `InvalidArgument` | Malformed envelope/JSON or application rejection; correct input rather than retrying unchanged. |
 | `FailedPrecondition` | Unsupported event/schema version or wrong configured chain; repair configuration/version compatibility. |
 | `ResourceExhausted` | Payload/message budget exceeded; retain event and resolve the budget/size problem. No truncation or blind repeated retry. |
@@ -84,7 +84,7 @@ Error messages do not expose payloads, provider URLs or underlying database
 details. Wrapped application errors retain their classification. The sender
 must retain its outbox until a valid positive ACK, including after lost responses.
 This is at-least-once delivery; no ordering or exactly-once guarantee is added.
-Retry workers, attempt budgets and dispatch are Stage 9 work. See the
+Retry workers, attempt budgets and dispatch are implemented in [Stage 9](handoff-stage9.md). See the
 [gRPC status reference](https://grpc.io/docs/guides/status-codes/).
 
 ## Byte budgets and memory
@@ -99,7 +99,7 @@ The raw budget sums block and receipt bytes, including whitespace, without
 joining slices or overflowing a counter. The transformed budget counts its JSON
 bytes. Whole-message checks include metadata and protobuf fields.
 `NewServer` configures both `grpc.MaxRecvMsgSize` and `grpc.MaxSendMsgSize`;
-future senders must use `limits.ClientOptions()`, which configures both
+Stage 9 senders use `limits.ClientOptions()`, which configures both
 `grpc.MaxCallSendMsgSize` and `grpc.MaxCallRecvMsgSize`, and explicitly check
 payload bytes before sending. Do not override these with incompatible per-call
 options. This helper creates no client connection or event transmission.

@@ -52,6 +52,7 @@ func integrationPool(t *testing.T, variable, role string) *pgxpool.Pool {
 func TestPostgresIntegration(t *testing.T) {
 	runtime := integrationPool(t, "EXTRACTOR_TEST_DATABASE_URL", "extractor_runtime")
 	owner := integrationPool(t, "EXTRACTOR_TEST_MIGRATOR_URL", "extractor_migrator")
+	t.Run("outbox delivery", func(t *testing.T) { testOutbox(t, runtime, owner) })
 	ctx := t.Context()
 	var next uint64 = 100000
 	newStore := func(t *testing.T, start uint64) *Store {

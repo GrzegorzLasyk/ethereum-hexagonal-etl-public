@@ -53,8 +53,7 @@ cleanup() {
 trap cleanup EXIT
 
 for service in "${services[@]}"; do
-    expected_migrations=2
-    if [[ "$service" == loader ]]; then expected_migrations=3; fi
+    expected_migrations=3
     migrate "$service"
     before=$(sql "${service}_migrator" \
         "SELECT version || checksum || applied_at::text FROM $service.schema_migrations ORDER BY version")
@@ -168,7 +167,7 @@ fi
 grep -q "division by zero" "$work/rollback"
 assert_value extractor_migrator \
     "SELECT to_regclass('extractor.${probe}_rollback') IS NULL" t
-assert_value extractor_migrator "SELECT count(*) FROM extractor.schema_migrations" 2
+assert_value extractor_migrator "SELECT count(*) FROM extractor.schema_migrations" 3
 echo "PASS: changed checksums rejected and failing migration batch rolled back"
 
 # Drop probes before checking the exact stage-owned table inventory.

@@ -1,5 +1,9 @@
 # Transformer Inbox, transformation and Outbox (Stage 7)
 
+This document records its stage's persistence boundary. [Stage 9](handoff-stage9.md)
+now adds Outbox transmission and executable dispatch wiring; earlier statements
+about deferred dispatch describe the original stage scope.
+
 This stage implements the Stage 7 acceptance criterion: accept durably,
 transform and queue output without Loader availability. No outgoing RPC, delivery
 dispatcher, Loader persistence, canonical-chain reconciliation or broker is added.

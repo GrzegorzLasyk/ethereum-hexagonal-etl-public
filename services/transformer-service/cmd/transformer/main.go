@@ -10,9 +10,11 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/adapters/inbound/dispatcher"
 	receiver "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/adapters/inbound/grpc"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/adapters/inbound/worker"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/adapters/outbound/ethereumjson"
+	publisher "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/adapters/outbound/grpc"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/adapters/outbound/jsondocument"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/adapters/outbound/postgres"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/application/usecases"
@@ -42,7 +44,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return errors.New("invalid database configuration")
 	}
-	pc.MaxConns = int32(cfg.Workers + 4)
+	pc.MaxConns = int32(cfg.Workers + cfg.Dispatch.Workers + 4)
 	pc.ConnConfig.ConnectTimeout = 5 * time.Second
 	pc.ConnConfig.RuntimeParams["statement_timeout"] = "10000"
 	pool, err := pgxpool.NewWithConfig(ctx, pc)
@@ -77,6 +79,23 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	queue, err := postgres.NewOutbox(pool, string(cfg.ChainID), cfg.Dispatch.Lease, cfg.Dispatch.MaxAttempts)
+	if err != nil {
+		return err
+	}
+	client, err := publisher.New(cfg.Dispatch.Target, string(cfg.ChainID), cfg.Limits)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	dispatch, err := usecases.NewDispatch(queue, client, cfg.Dispatch.RPCTimeout, cfg.Dispatch.InitialBackoff, cfg.Dispatch.MaxBackoff)
+	if err != nil {
+		return err
+	}
+	sender, err := dispatcher.New(dispatch, logger, cfg.Dispatch.Workers, cfg.Dispatch.PollInterval, cfg.Dispatch.Timeout)
+	if err != nil {
+		return err
+	}
 	server, err := receiver.NewServer(string(cfg.ChainID), cfg.Limits, accept)
 	if err != nil {
 		return err
@@ -90,6 +109,8 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	defer stop()
 	workerDone := make(chan struct{})
 	go func() { runner.Run(working); close(workerDone) }()
+	dispatchDone := make(chan struct{})
+	go func() { sender.Run(working); close(dispatchDone) }()
 	serving := make(chan error, 1)
 	go func() { serving <- server.Serve(listener) }()
 	logger.Info("transformer started", "address", cfg.ListenAddress, "chain_id", cfg.ChainID, "workers", cfg.Workers)
@@ -110,6 +131,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		<-graceful
 	}
 	<-workerDone
+	<-dispatchDone
 	logger.Info("transformer stopped")
 	if serveErr != nil {
 		return errors.New("gRPC serving failed")

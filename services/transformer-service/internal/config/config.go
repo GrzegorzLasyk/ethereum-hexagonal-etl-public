@@ -14,6 +14,7 @@ import (
 )
 
 type Config struct {
+	Dispatch                                                                         DispatchConfig
 	LogLevel                                                                         slog.Level
 	DatabaseURL                                                                      string
 	ChainID                                                                          domain.ChainID
@@ -103,6 +104,10 @@ func Load() (Config, error) {
 	}
 	if cfg.Lease <= cfg.ProcessTimeout || cfg.MaxBackoff < cfg.InitialBackoff {
 		return Config{}, fmt.Errorf("lease must exceed process timeout; max backoff must cover initial backoff")
+	}
+	cfg.Dispatch, err = loadDispatch()
+	if err != nil {
+		return Config{}, err
 	}
 	return cfg, nil
 }
