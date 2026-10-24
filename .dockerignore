@@ -1,0 +1,16 @@
+.git
+.env*
+**/.env*
+.codex
+.agents
+.aws
+.idea
+README-priv.md
+bin
+build
+dist
+tmp
+temp
+**/*.log
+**/*.out
+**/*.test

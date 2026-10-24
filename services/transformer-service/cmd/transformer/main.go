@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/health"
+
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/adapters/inbound/dispatcher"
 	receiver "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/adapters/inbound/grpc"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/adapters/inbound/worker"
@@ -105,6 +107,11 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return errors.New("cannot open gRPC listener")
 	}
 	defer listener.Close()
+	closeHealth, err := health.Start(ctx, os.Getenv("TRANSFORMER_HEALTH_ADDRESS"), pool.Ping)
+	if err != nil {
+		return err
+	}
+	defer closeHealth()
 	working, stop := context.WithCancel(ctx)
 	defer stop()
 	workerDone := make(chan struct{})

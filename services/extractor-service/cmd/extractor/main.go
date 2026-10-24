@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/health"
+
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/adapters/inbound/dispatcher"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/adapters/inbound/indexer"
 	publisher "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/adapters/outbound/grpc"
@@ -63,6 +65,11 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if cfg.Indexing.Mode == "replay" {
 		return usecases.Replay(ctx, store, cfg.Indexing.Replay)
 	}
+	closeHealth, err := health.Start(ctx, os.Getenv("EXTRACTOR_HEALTH_ADDRESS"), pool.Ping)
+	if err != nil {
+		return err
+	}
+	defer closeHealth()
 	var acquisition *indexer.Worker
 	if cfg.Indexing.Mode == "index" || cfg.Indexing.Mode == "reindex" {
 		source, e := jsonrpc.New(cfg.Indexing.RPC, nil)
