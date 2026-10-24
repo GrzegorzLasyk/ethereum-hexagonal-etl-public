@@ -1,0 +1,124 @@
+# Local-only overlay. Sharing the fixture network namespace preserves the
+# existing loopback-only HTTP/gRPC policy without adding insecure remote modes.
+x-app: &app
+  image: ethereum-etl-fixture:local
+  profiles: ["fixture"]
+  network_mode: service:fixture
+  read_only: true
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+  stop_grace_period: 30s
+
+x-health: &health
+  interval: 2s
+  timeout: 3s
+  retries: 3
+  start_period: 5s
+
+services:
+  migrate-extractor:
+    profiles: ["tools", "fixture"]
+  migrate-transformer:
+    profiles: ["tools", "fixture"]
+  migrate-loader:
+    profiles: ["tools", "fixture"]
+
+  fixture:
+    image: ethereum-etl-fixture:local
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile
+    profiles: ["fixture"]
+    entrypoint: ["/app/ethereum-fixture"]
+    environment:
+      FIXTURE_HEAD: ${FIXTURE_HEAD:-104}
+    ports:
+      - "127.0.0.1:${FIXTURE_PORT:-18545}:8545"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    stop_grace_period: 10s
+    healthcheck:
+      <<: *health
+      test: ["CMD", "/app/probe", "http://127.0.0.1:8545/ready"]
+
+  extractor:
+    <<: *app
+    entrypoint: ["/app/extractor"]
+    depends_on:
+      fixture: {condition: service_healthy}
+      migrate-extractor: {condition: service_completed_successfully}
+    environment:
+      EXTRACTOR_DATABASE_URL: postgres://extractor_runtime:${EXTRACTOR_RUNTIME_PASSWORD:?Set EXTRACTOR_RUNTIME_PASSWORD}@postgres:5432/ethereum_etl?sslmode=disable
+      EXTRACTOR_CHAIN_ID: "1"
+      EXTRACTOR_MODE: index
+      EXTRACTOR_START_BLOCK: "100"
+      EXTRACTOR_CONFIRMATION_DEPTH: "1"
+      EXTRACTOR_RECOVERY_DEPTH: "8"
+      EXTRACTOR_MAX_OUTSTANDING_EVENTS: "100"
+      EXTRACTOR_MAX_OUTSTANDING_BYTES: "16777216"
+      EXTRACTOR_MAX_DATABASE_BYTES: "1073741824"
+      EXTRACTOR_RPC_URL: http://127.0.0.1:8545/
+      EXTRACTOR_RPC_PROVIDER: stage11-fixture
+      EXTRACTOR_RPC_INTERVAL: 1ms
+      EXTRACTOR_BATCH_SIZE: "4"
+      EXTRACTOR_POLL_INTERVAL: 200ms
+      EXTRACTOR_MAX_CYCLE_ERRORS: "1000"
+      EXTRACTOR_HEALTH_ADDRESS: 127.0.0.1:8091
+      EXTRACTOR_DISPATCH_TARGET: 127.0.0.1:51051
+      EXTRACTOR_DISPATCH_MAX_ATTEMPTS: "1000"
+      EXTRACTOR_DISPATCH_POLL_INTERVAL: 100ms
+      EXTRACTOR_DISPATCH_INITIAL_BACKOFF: 200ms
+      EXTRACTOR_DISPATCH_MAX_BACKOFF: 1s
+      EXTRACTOR_DISPATCH_RPC_TIMEOUT: 1s
+      EXTRACTOR_DISPATCH_TIMEOUT: 2s
+      EXTRACTOR_DISPATCH_LEASE: 3s
+    healthcheck:
+      <<: *health
+      test: ["CMD", "/app/probe", "http://127.0.0.1:8091/ready"]
+
+  transformer:
+    <<: *app
+    entrypoint: ["/app/transformer"]
+    depends_on:
+      fixture: {condition: service_healthy}
+      migrate-transformer: {condition: service_completed_successfully}
+    environment:
+      TRANSFORMER_DATABASE_URL: postgres://transformer_runtime:${TRANSFORMER_RUNTIME_PASSWORD:?Set TRANSFORMER_RUNTIME_PASSWORD}@postgres:5432/ethereum_etl?sslmode=disable
+      TRANSFORMER_CHAIN_ID: "1"
+      TRANSFORMER_GRPC_ADDRESS: 127.0.0.1:50051
+      TRANSFORMER_HEALTH_ADDRESS: 127.0.0.1:8092
+      TRANSFORMER_POLL_INTERVAL: 100ms
+      TRANSFORMER_MAX_ATTEMPTS: "1000"
+      TRANSFORMER_INITIAL_BACKOFF: 200ms
+      TRANSFORMER_MAX_BACKOFF: 1s
+      TRANSFORMER_DISPATCH_TARGET: 127.0.0.1:51052
+      TRANSFORMER_DISPATCH_MAX_ATTEMPTS: "1000"
+      TRANSFORMER_DISPATCH_POLL_INTERVAL: 100ms
+      TRANSFORMER_DISPATCH_INITIAL_BACKOFF: 200ms
+      TRANSFORMER_DISPATCH_MAX_BACKOFF: 1s
+      TRANSFORMER_DISPATCH_RPC_TIMEOUT: 1s
+      TRANSFORMER_DISPATCH_TIMEOUT: 2s
+      TRANSFORMER_DISPATCH_LEASE: 3s
+    healthcheck:
+      <<: *health
+      test: ["CMD", "/app/probe", "http://127.0.0.1:8092/ready"]
+
+  loader:
+    <<: *app
+    entrypoint: ["/app/loader"]
+    depends_on:
+      fixture: {condition: service_healthy}
+      migrate-loader: {condition: service_completed_successfully}
+    environment:
+      LOADER_DATABASE_URL: postgres://loader_runtime:${LOADER_RUNTIME_PASSWORD:?Set LOADER_RUNTIME_PASSWORD}@postgres:5432/ethereum_etl?sslmode=disable
+      LOADER_CHAIN_ID: "1"
+      LOADER_GRPC_ADDRESS: 127.0.0.1:50052
+      LOADER_HEALTH_ADDRESS: 127.0.0.1:8093
+      LOADER_POLL_INTERVAL: 100ms
+      LOADER_MAX_ATTEMPTS: "1000"
+      LOADER_INITIAL_BACKOFF: 200ms
+      LOADER_MAX_BACKOFF: 1s
+    healthcheck:
+      <<: *health
+      test: ["CMD", "/app/probe", "http://127.0.0.1:8093/ready"]

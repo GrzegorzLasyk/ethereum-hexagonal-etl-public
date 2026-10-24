@@ -29,6 +29,10 @@ Apply the new migration before starting the new Extractor. See the
 [Stage 10 operator runbook](docs/architecture/extraction-stage10.md) and
 [accepted ADR 0004](docs/adr/0004-ordered-extraction-reorg-recovery.md).
 
+Stage 11 adds a complete local Compose environment, deterministic Ethereum RPC
+fixtures and an isolated E2E runner covering outages, ambiguous ACKs, restarts,
+replay and reorg recovery. See the [local setup and test runbook](docs/architecture/local-stage11.md).
+
 The approved MVP uses gRPC with Protocol Buffers for transport and service-owned PostgreSQL schemas with transactional outbox/inbox storage for durable, at-least-once handoff. A receiver will acknowledge an event only after its inbox transaction commits. See [ADR 0001](docs/adr/0001-mvp-transport-and-storage.md), [PLAN.md](PLAN.md), and [AGENTS.md](AGENTS.md) for decisions and staged implementation.
 
 ## Prerequisites
@@ -36,6 +40,18 @@ The approved MVP uses gRPC with Protocol Buffers for transport and service-owned
 Use Go 1.27.3 as declared in the root `go.mod`. Run the following commands from the repository root. Ordinary unit tests need no infrastructure. Running services requires migrated PostgreSQL; integration runners require Docker Engine/Desktop and Compose. No live Ethereum provider or broker is needed for deterministic tests.
 
 ## Build
+
+For the complete local pipeline, start with the [Stage 11 fixture runbook](docs/architecture/local-stage11.md).
+The isolated verification command builds and starts PostgreSQL, all three services
+and a local Ethereum RPC fixture, injects failures/reorgs, verifies persisted data
+and cleans up its temporary project:
+
+```sh
+go run ./test/integration/cmd/fixture-e2e
+```
+
+It needs Docker Desktop/Engine and Go, supports native Apple Silicon, and makes
+no real Infura calls. The runbook also describes a persistent developer setup.
 
 ```sh
 mkdir -p bin
@@ -84,7 +100,12 @@ LOG_LEVEL=DEBUG ./bin/extractor-service
 
 ## Process health checks
 
-For Extractor, check `extractor dispatcher started`, its Outbox progress and clean shutdown on SIGINT/SIGTERM. A started dispatcher does not imply that its recipient is online. Transformer and Loader log `transformer started` / `loader started` after checking their database role and opening a listener, then log Inbox progress. This is not an end-to-end readiness check. No HTTP/gRPC health endpoint or background health polling is implemented.
+Optional `<SERVICE>_HEALTH_ADDRESS` variables enable loopback-only `/live` and
+`/ready` HTTP endpoints. Readiness requires a responsive owning database after
+startup; liveness follows process cancellation. The Stage 11 Compose overlay
+configures and checks these endpoints. Neither readiness nor startup logs imply
+that downstream work has completed; inspect Inbox/Outbox progress separately.
+See [health and shutdown semantics](docs/architecture/local-stage11.md#networking-readiness-and-shutdown).
 
 For a manual SIGTERM smoke check, start a built binary in the background, confirm its startup log and running PID, then stop that PID:
 
@@ -198,7 +219,7 @@ The approved development source is Ethereum Mainnet (`1`). Transformer makes no 
 | `TRANSFORMER_MAX_BACKOFF` | `1m` | At least initial backoff |
 | `TRANSFORMER_SHUTDOWN_TIMEOUT` | `10s` | RPC shutdown grace period |
 
-Durations use Go duration syntax, between 1 ms and 24 h. The pool has `workers + 4` connections, a 5 s connect timeout and a 10 s SQL statement timeout. Compose reads `.env`; the Go executable does not. Non-loopback deployment, transport authentication/TLS and full service Compose deployment remain later work.
+Durations use Go duration syntax, between 1 ms and 24 h. The pool has `workers + 4` connections, a 5 s connect timeout and a 10 s SQL statement timeout. Compose reads its selected environment file; the Go executable does not. The [Stage 11 overlay](docs/architecture/local-stage11.md) provides full local service deployment. Non-loopback deployment and transport authentication/TLS remain later work.
 
 Owned tables are `transformer.inbox_events`, `transformer.transformed_blocks` and `transformer.outbox_events`. The runtime can update only Inbox processing and Outbox delivery columns. Status (`pending`, `processing`, `completed`, `failed`), attempts, lease, next attempt and safe error code expose progress. Workers reclaim expired leases after restart; failed input remains retained. Stage 9 dispatches these intents and records delivery status. See [normalized JSON and recovery semantics](docs/architecture/transformer-stage7.md).
 
