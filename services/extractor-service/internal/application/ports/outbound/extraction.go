@@ -17,6 +17,7 @@ type BlockSource interface {
 type CommitExtraction struct {
 	Extraction         domain.Extraction
 	ExpectedCheckpoint *domain.Checkpoint
+	Limits             *domain.CapacityLimits
 }
 
 type CommitResult struct {
@@ -33,7 +34,8 @@ type CommitResult struct {
 // block identity is an idempotent success (AlreadyStored), even if a concurrent
 // identical extraction has advanced progress. Retain its original data/event.
 // Other checkpoint changes return domain.ErrCheckpointConflict; incompatible
-// hashes return domain.ErrBlockConflict. Never regress progress.
+// hashes return domain.ErrBlockConflict. Only the separately approved BranchStore.Rewind may regress active progress.
+// Compare checkpoint revisions before activating any new branch member.
 //
 // The event deduplication key is Extraction.Header.ID.EventID(). No independent
 // checkpoint setter or network publisher is exposed. An ambiguous commit error

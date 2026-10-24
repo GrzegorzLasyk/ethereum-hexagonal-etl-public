@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/application/ports/outbound"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
 
@@ -413,7 +414,7 @@ func TestRetryRecoveryAndRetryAfter(t *testing.T) {
 			if tt.wantCalls == 2 && (err != nil || id != "1") {
 				t.Fatalf("id=%s err=%v", id, err)
 			}
-			if tt.wantCalls == 1 && err == nil {
+			if tt.wantCalls == 1 && !errors.Is(err, outbound.ErrRetryDeferred) {
 				t.Fatal("ignored server cooldown")
 			}
 		})

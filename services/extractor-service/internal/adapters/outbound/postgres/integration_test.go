@@ -52,6 +52,7 @@ func integrationPool(t *testing.T, variable, role string) *pgxpool.Pool {
 func TestPostgresIntegration(t *testing.T) {
 	runtime := integrationPool(t, "EXTRACTOR_TEST_DATABASE_URL", "extractor_runtime")
 	owner := integrationPool(t, "EXTRACTOR_TEST_MIGRATOR_URL", "extractor_migrator")
+	t.Run("stage10 indexing", func(t *testing.T) { testIndexing(t, runtime, owner) })
 	t.Run("outbox delivery", func(t *testing.T) { testOutbox(t, runtime, owner) })
 	ctx := t.Context()
 	var next uint64 = 100000
@@ -245,7 +246,7 @@ func TestPostgresIntegration(t *testing.T) {
 		}
 	})
 	t.Run("rollback after each write and retry", func(t *testing.T) {
-		for _, table := range []string{"raw_blocks", "outbox_events", "extraction_checkpoints"} {
+		for _, table := range []string{"raw_blocks", "outbox_events", "active_blocks", "extraction_checkpoints"} {
 			for _, continuation := range []bool{false, true} {
 				t.Run(table+strconv.FormatBool(continuation), func(t *testing.T) {
 					s := newStore(t, 42)
@@ -475,7 +476,7 @@ BEGIN RAISE EXCEPTION 'injected partial failure'; END $$`)
 		e := snapshot(s.chain, 42, 2, 1)
 		id := e.Header.ID
 		insertCheckpoint := func(chain string, hash []byte) error {
-			_, err := runtime.Exec(ctx, `INSERT INTO extractor.extraction_checkpoints(chain_id,block_number,block_hash) VALUES ($1,42,$2)`, chain, hash)
+			_, err := runtime.Exec(ctx, `INSERT INTO extractor.extraction_checkpoints(chain_id,block_number,block_hash,start_number) VALUES ($1,42,$2,42)`, chain, hash)
 			return err
 		}
 		foreignKeyFailure := func(err error) {

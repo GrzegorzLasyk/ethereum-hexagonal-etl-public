@@ -11,14 +11,14 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
 
-// Config starts the dispatcher for committed snapshots; acquisition scheduling
-// remains a separate stage and is not silently enabled here.
+// Config explicitly selects dispatch, indexing or an operator command.
 type Config struct {
 	LogLevel    slog.Level
 	DatabaseURL string
 	ChainID     domain.ChainID
 	Limits      grpccontract.Limits
 	Dispatch    DispatchConfig
+	Indexing    IndexingConfig
 }
 
 func Load() (Config, error) {
@@ -55,5 +55,9 @@ func Load() (Config, error) {
 	}
 	var err error
 	c.Dispatch, err = loadDispatch()
+	if err != nil {
+		return c, err
+	}
+	c.Indexing, err = loadIndexing(c)
 	return c, err
 }

@@ -229,6 +229,9 @@ func (c *Client) call(ctx context.Context, method string, params []any) (json.Ra
 			return nil, ctx.Err()
 		}
 		if !retry || attempt >= c.config.MaxAttempts || retryAfter > c.config.MaxBackoff {
+			if retryAfter > 0 {
+				err = errors.Join(err, fmt.Errorf("%w: wait at least %s", outbound.ErrRetryDeferred, retryAfter))
+			}
 			return nil, fmt.Errorf("%s after %d attempt(s): %w", method, attempt, err)
 		}
 		// Equal jitter: [backoff/2, backoff], capped without duration overflow.

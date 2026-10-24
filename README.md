@@ -22,6 +22,13 @@ Stage 9 connects Extractor → Transformer → Loader with leased Outbox dispatc
 stable IDs and verified durable gRPC ACKs. Deterministic tests cover offline
 recipients, lost ACKs and sender crashes. See [handoff operation](docs/architecture/handoff-stage9.md).
 
+Stage 10 adds ordered/ranged and follow-head acquisition, explicit confirmation
+depth, bounded provider-relative reorg recovery, backpressure, replay and reindex.
+Historical observations remain immutable; active Extractor membership is separate.
+Apply the new migration before starting the new Extractor. See the
+[Stage 10 operator runbook](docs/architecture/extraction-stage10.md) and
+[accepted ADR 0004](docs/adr/0004-ordered-extraction-reorg-recovery.md).
+
 The approved MVP uses gRPC with Protocol Buffers for transport and service-owned PostgreSQL schemas with transactional outbox/inbox storage for durable, at-least-once handoff. A receiver will acknowledge an event only after its inbox transaction commits. See [ADR 0001](docs/adr/0001-mvp-transport-and-storage.md), [PLAN.md](PLAN.md), and [AGENTS.md](AGENTS.md) for decisions and staged implementation.
 
 ## Prerequisites
@@ -246,8 +253,9 @@ in failed Inbox state. Stage 9 now connects this receiver to the Transformer dis
 Different hashes at the same chain/height retain separate blocks and child records.
 Every competing version has `height_conflict=true` and `canonical_status='unknown'`.
 Successful Inbox completion and a matching parent do not establish canonicality.
-Extractor currently rejects competing hashes; Loader preserves conflicting
-observations. Neither service automatically reconciles reorganizations.
+Extractor retains competing hashes and performs bounded recovery of its separate
+active branch (ADR 0004). Loader preserves conflicting observations without
+automatically selecting a canonical branch.
 
 [Loader documentation](docs/architecture/loader-stage8.md) lists all `LOADER_*`
 configuration settings, schema types, permission boundaries, restart semantics
@@ -279,8 +287,10 @@ lease. See [all dispatch settings, transaction boundaries and backlog queries](d
 
 Start Loader, Transformer and Extractor in separate terminals; other orders also
 work within retry budgets. Extractor dispatches already-committed snapshots;
-continuous acquisition remains Stage 10. Failed events stay retained and are not
-reset by restart. No replay tool or canonical-chain reconciliation is added.
+continuous acquisition is available through the explicit Stage 10 `index` mode.
+Failed events stay retained and are not reset by restart. Stage 10 adds explicit
+Extractor replay/reindex commands; downstream canonical-chain reconciliation
+remains outside scope.
 
 ```sh
 # Isolated deterministic handoff test, including database and gRPC failures:
@@ -368,6 +378,12 @@ Ordinary tests use `httptest` and synthetic fixtures; they need local loopback s
 Receipt calls are sequential and unbatched: `N + 3` RPC calls per block before retries, plus the use case's own chain check. No archive entitlement or throughput is assumed. Unknown fields are retained; unknown transaction types fail explicitly. Fork-dependent fields are checked when present and where implied by transaction type; there is no complete fork-activation calendar. Validation checks source shape and consistency, not signatures, header/trie roots, or consensus. Conflicting receipt/log hashes fail, but a consistent snapshot is not proof of finality or continued canonicality. Reorg reconciliation, durable storage, outbox/gRPC delivery, and range/follow-head workers belong to later stages.
 
 ## Extractor PostgreSQL persistence (Stage 5)
+
+The following describes the original Stage 5 boundary. Stage 10 extends it with
+separate active membership, revision-fenced recovery and operator jobs; see the
+[updated persistence semantics](docs/architecture/extraction-stage10.md).
+Height-only uniqueness and first-lineage-only behavior no longer apply after
+migration 0004. Historical source bytes and event identities remain immutable.
 
 Migration `migrations/extractor/0002_extraction_storage.sql` is owned and applied by `extractor_migrator`. The runtime adapter uses `extractor_runtime` in `ethereum_etl`. Run the existing Compose migration command after PostgreSQL becomes healthy:
 
@@ -537,7 +553,7 @@ dc run --rm verify
 
 This Stage 2 integration suite uses actual authenticated TCP connections, with no administrator password. It verifies all six roles, schema ownership, database restrictions, cross-schema read/write/DDL denial, blocked role escalation, runtime DDL and migration-metadata denial, explicit own-schema CRUD grants, sequence/function isolation, and rejection of wrong passwords. It also checks repeated/concurrent migrations, checksum mismatch rejection, and transaction rollback on an intentionally failing migration batch.
 
-The test temporarily creates uniquely named probe tables/functions, grants narrowly scoped probe access, and removes these objects on exit. It uses temporary copies of migration files for failure tests and does not edit committed migrations. Run it on the local development database, not production: its final assertion checks the exact current inventory (migration metadata plus the three Extractor, three Transformer and five Loader tables). A forcibly killed test may require cleanup of its `stage2_probe_*` objects by the owning migrator.
+The test temporarily creates uniquely named probe tables/functions, grants narrowly scoped probe access, and removes these objects on exit. It uses temporary copies of migration files for failure tests and does not edit committed migrations. Run it on the local development database, not production: its final assertion checks the exact current inventory (migration metadata plus the seven Extractor, three Transformer and five Loader tables). A forcibly killed test may require cleanup of its `stage2_probe_*` objects by the owning migrator.
 
 To verify persistence across container replacement, after a successful test:
 
