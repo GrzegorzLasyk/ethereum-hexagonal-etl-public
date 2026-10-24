@@ -52,7 +52,7 @@ chain is correct. Consumers must not interpret loaded or linked as canonical.
 
 ## Extractor and Loader intentionally differ
 
-Extractor currently rejects competing hashes or parent discontinuity and stops
+At Stage 8 acceptance, Extractor rejected competing hashes or parent discontinuity and stopped
 advancing its accepted extraction lineage (ADR 0002 / Stage 5). Loader preserves
 conflicting observations delivered to its own Inbox. This does not change
 Extractor's policy or introduce a route around it; tests submit controlled
@@ -79,3 +79,11 @@ transmission or subsequent stage is added. These require later explicit work.
 
 Failing a competing candidate would make arrival order select the materialized
 query dataset. The user chose retention with explicit observations instead.
+
+## Stage 10 compatibility note
+
+Accepted ADR 0004 now permits Extractor to retain competing observations and
+recover its separate active branch. This does not change any Loader decision in
+this ADR: every candidate remains `canonical_status=unknown`, and there are no
+canonical-selection or retraction messages. The first-lineage restriction above
+records the Stage 8 context, not the current Extractor persistence contract.

@@ -6,12 +6,16 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/adapters/inbound/dispatcher"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/adapters/inbound/indexer"
 	publisher "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/adapters/outbound/grpc"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/adapters/outbound/jsonrpc"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/adapters/outbound/postgres"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/application/ports/inbound"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/application/usecases"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/config"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -52,6 +56,33 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil || role != "extractor_runtime" || db != "ethereum_etl" {
 		return errors.New("database requires extractor_runtime in ethereum_etl")
 	}
+	store, err := postgres.New(pool, cfg.ChainID, cfg.Indexing.Options.Start)
+	if err != nil {
+		return err
+	}
+	if cfg.Indexing.Mode == "replay" {
+		return usecases.Replay(ctx, store, cfg.Indexing.Replay)
+	}
+	var acquisition *indexer.Worker
+	if cfg.Indexing.Mode == "index" || cfg.Indexing.Mode == "reindex" {
+		source, e := jsonrpc.New(cfg.Indexing.RPC, nil)
+		if e != nil {
+			return e
+		}
+		var scheduler inbound.Indexer
+		if cfg.Indexing.Mode == "index" {
+			scheduler, err = usecases.NewIndex(cfg.Indexing.Options, source, source, store)
+		} else {
+			scheduler, err = usecases.NewReindex(cfg.Indexing.Options, cfg.Indexing.OperationID, source, source, store)
+		}
+		if err != nil {
+			return err
+		}
+		acquisition, err = indexer.New(scheduler, logger, cfg.Indexing.Poll, cfg.Indexing.Timeout, cfg.Indexing.MaxErrors)
+		if err != nil {
+			return err
+		}
+	}
 	queue, err := postgres.NewOutbox(pool, string(cfg.ChainID), cfg.Dispatch.Lease, cfg.Dispatch.MaxAttempts)
 	if err != nil {
 		return err
@@ -70,7 +101,16 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return err
 	}
 	logger.Info("extractor dispatcher started", "chain_id", cfg.ChainID, "workers", cfg.Dispatch.Workers)
-	runner.Run(ctx)
+	if acquisition == nil {
+		runner.Run(ctx)
+	} else {
+		work, cancel := context.WithCancel(ctx)
+		var group sync.WaitGroup
+		group.Go(func() { runner.Run(work) })
+		err = acquisition.Run(work)
+		cancel()
+		group.Wait()
+	}
 	logger.Info("extractor dispatcher stopped")
-	return nil
+	return err
 }

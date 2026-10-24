@@ -1,0 +1,111 @@
+package usecases
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/application/ports/inbound"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/application/ports/outbound"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
+)
+
+type Reindex struct {
+	options  IndexOptions
+	request  outbound.ReindexRequest
+	source   outbound.BlockSource
+	observer outbound.ChainObserver
+	store    outbound.ReindexStore
+}
+
+var _ inbound.Indexer = (*Reindex)(nil)
+
+func NewReindex(o IndexOptions, id string, source outbound.BlockSource, observer outbound.ChainObserver, store outbound.ReindexStore) (*Reindex, error) {
+	if err := o.Validate(); err != nil {
+		return nil, err
+	}
+	if o.End == nil || domain.ValidateOperationID(id) != nil || source == nil || observer == nil || store == nil {
+		return nil, domain.ErrInvalidData
+	}
+	return &Reindex{o, outbound.ReindexRequest{ID: id, Start: o.Start, End: *o.End}, source, observer, store}, nil
+}
+func (u *Reindex) Cycle(ctx context.Context) (inbound.IndexResult, error) {
+	var result inbound.IndexResult
+	for result.Processed < u.options.Batch {
+		state, err := u.store.OpenReindex(ctx, u.request)
+		if err != nil {
+			return result, err
+		}
+		head, err := u.observer.Head(ctx)
+		if err != nil {
+			return result, err
+		}
+		if err := validHeader(head, u.options.Chain, head.ID.Number); err != nil {
+			return result, err
+		}
+		if state.Last != nil {
+			last, err := u.observer.Header(ctx, state.Last.Number)
+			if err != nil {
+				return result, err
+			}
+			if last.ID != *state.Last || head.ID.Number < state.Last.Number {
+				return result, fmt.Errorf("%w: reindex branch changed; investigate and use a new operation ID", domain.ErrRecoveryRequired)
+			}
+			if state.Last.Number == u.request.End {
+				result.Done = true
+				return result, nil
+			}
+		}
+		next := u.request.Start
+		if state.Last != nil {
+			next = state.Last.Number + 1
+		}
+		eligible, ok := domain.EligibleHeight(head.ID.Number, u.options.Confirmations)
+		if !ok || next > eligible {
+			result.Waiting = true
+			return result, nil
+		}
+		capacity, err := u.store.Capacity(ctx)
+		if err != nil {
+			return result, err
+		}
+		if !capacity.Allows(u.options.Limits, 0) {
+			result.Backpressure = true
+			return result, nil
+		}
+		e, err := u.source.Block(ctx, next)
+		if err != nil {
+			return result, err
+		}
+		if err := e.Validate(); err != nil {
+			return result, err
+		}
+		if err := validHeader(e.Header, u.options.Chain, next); err != nil {
+			return result, err
+		}
+		if state.Last != nil && e.Header.ParentHash != state.Last.Hash {
+			return result, domain.ErrUnstableChain
+		}
+		if err := verifyObservation(ctx, u.observer, e.Header, head); err != nil {
+			return result, err
+		}
+		if err := u.store.CommitReindex(ctx, state, e, u.options.Limits); err != nil {
+			if errors.Is(err, domain.ErrBackpressure) {
+				result.Backpressure = true
+				return result, nil
+			}
+			return result, err
+		}
+		result.Processed++
+	}
+	return result, nil
+}
+
+// Replay grants one retained event a bounded fresh delivery allowance. It does
+// not reset a downstream inbox or change immutable source/transformation data.
+func Replay(ctx context.Context, store outbound.ReplayStore, r outbound.ReplayRequest) error {
+	if store == nil || domain.ValidateOperationID(r.ID) != nil || r.EventID == "" || r.Allowance < 1 || r.Allowance > 1000 {
+		return domain.ErrInvalidData
+	}
+	return store.Replay(ctx, r)
+}

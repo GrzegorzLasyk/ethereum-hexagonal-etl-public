@@ -1,6 +1,6 @@
 # ADR 0002: Ethereum source data and single-block extraction boundary
 
-- Status: Accepted; extended in Stage 4 with the approved Infura Ethereum Mainnet source and Stage 5 with local persistence semantics.
+- Status: Accepted; extended in Stage 4 with the approved Infura Ethereum Mainnet source and Stage 5 with local persistence semantics; amended in Stage 10 by accepted ADR 0004.
 - Scope: Extractor source dataset, domain/application contracts, JSON-RPC acquisition and local persistence. Inter-service transport implementation remains outside this scope.
 - Related: [ADR 0001](0001-mvp-transport-and-storage.md), [plan](../../PLAN.md), [instructions](../../AGENTS.md).
 
@@ -38,7 +38,7 @@ All receipt logs must refer to their enclosing block/transaction. Their global l
 
 This validates internal source consistency, not cryptographic header hashes, signatures, trie roots, or consensus canonicality. Provider selection/trust and finality are separate decisions. The domain rejects conflicts; it does not repair reorganizations.
 
-## ExtractBlock and persistence contract
+## Original single-block contract (Stages 3–5)
 
 The use case is configured with one explicit chain ID and starting height. Each request repeats the intended chain ID and names one block number. It checks cancellation and request identity, verifies source chain identity, reads the current extraction checkpoint, fetches and validates the complete source snapshot, and calls one atomic persistence operation. It does not publish an event, retry internally, poll the head, or write a checkpoint separately.
 
@@ -65,7 +65,7 @@ Stage 5 implements this boundary in the Extractor PostgreSQL adapter. It keeps e
 
 Returning only hashes would omit transaction bodies; fetching blocks without receipts would lose execution outcomes and logs. Fully normalizing every field inside Extractor would duplicate the Transformer's responsibility. Keeping opaque data without any typed membership checks would permit incomplete/mixed-block handoff. The chosen split preserves source data and validates extraction identity without coupling service domains.
 
-Stage 4 resolves the development source as Infura Ethereum Mainnet (decimal chain ID `1`), as explicitly requested. The actual credential-bearing RPC URL and account history/throughput access remain deployment configuration. Confirmation depth/finality, reorg reconciliation and production acquisition resource budgets remain open. Stage 6 resolves the gRPC envelope as exact raw block/receipt JSON bytes with configurable budgets up to 64 MiB payload / 65 MiB message; see [ADR 0001](0001-mvp-transport-and-storage.md#stage-6-approved-payload-and-transport-limits). Acquisition budgets must be aligned with the eventual handoff without changing stored source bytes. Traces remain excluded.
+Stage 4 resolves the development source as Infura Ethereum Mainnet (decimal chain ID `1`), as explicitly requested. The actual credential-bearing RPC URL and account history/throughput access remain deployment configuration. Stage 10 resolves configurable confirmation depth, bounded provider-relative reorg recovery and acquisition admission limits in ADR 0004. Consensus finality remains unasserted. Stage 6 resolves the gRPC envelope as exact raw block/receipt JSON bytes with configurable budgets up to 64 MiB payload / 65 MiB message; see [ADR 0001](0001-mvp-transport-and-storage.md#stage-6-approved-payload-and-transport-limits). Acquisition budgets must be aligned with the eventual handoff without changing stored source bytes. Traces remain excluded.
 
 ## Stage 4 acquisition decisions
 
@@ -80,3 +80,39 @@ Transient transport failures, request timeouts, HTTP 408/429/500/502/503/504, an
 Request pacing is local to one client instance, not a shared account-wide credit limiter. Bound every response body, including error bodies, and the sum of retained raw result bytes; reject oversize snapshots in full rather than truncating or returning partial data. These are byte budgets, not exact process-memory limits. Caller cancellation bounds the whole operation; the per-request timeout also covers reading the body. The optional live test has separately documented smoke-test budgets, not service defaults.
 
 HTTPS is required outside loopback tests, redirects are disabled, and returned errors expose only safe numeric HTTP/RPC diagnostics and local validation context. Provider messages, HTTP bodies, and endpoint URLs are excluded from errors because they can contain credentials. The provider label must not contain a secret. No acquisition result advances a checkpoint or asserts durable storage. Matching hashes detect mixed snapshots during a reorganization but do not prove finality or that the block remains canonical after acquisition.
+
+## Stage 10 amendment: observations and active extraction branch
+
+[Accepted ADR 0004](0004-ordered-extraction-reorg-recovery.md) supersedes the
+first-accepted-lineage-only restriction above. Raw data and Outbox events retain
+full `(chain_id, block_number, block_hash)` identity. `active_blocks` separately
+records the provider-relative branch. All old snapshots, exact bytes, provenance
+and stable event IDs remain immutable; former branch events remain deliverable.
+
+Normal commits atomically store a new observation/Outbox intent if necessary,
+activate its branch membership and advance the checkpoint. Previously retained
+identities reuse their original snapshot and event. The checkpoint now also
+stores the original start and a rewind revision. All branch mutations serialize
+per chain; work fetched before a rewind cannot advance the new branch under an
+old revision, even if the same tip later reappears.
+
+After a bounded parent-linked search and anchor rechecks, the application can
+request an audited, conditional transactional rewind to an active retained common
+ancestor. Only active membership above the ancestor is removed; immutable source
+observations and Outbox events are retained. The checkpoint rewind, revision
+increment and audit commit together. A retained operation record resolves an
+ambiguous rewind COMMIT. Deep forks, missing local ancestry or regressed provider
+heads halt safely; source errors do not justify deleting or rewinding data.
+
+The scheduler processes inclusive configured ranges or follows the head. Required
+confirmation depth D admits heights <= H-D, with no eligible height when H<D.
+D=0 explicitly admits the head. Backpressure pauses acquisition based on local
+non-delivered Outbox count/bytes (including failed work) and database size.
+Reindex has a separate restartable range cursor; replay requeues an exact retained
+Extractor event with an audited additional allowance and monotonic claim fencing.
+Neither resets downstream processing or silently replaces a snapshot.
+
+Extractor branch membership and confirmations establish neither Ethereum
+consensus finality nor Loader canonicality. Loader retains competing observations
+with `canonical_status=unknown` under ADR 0003. The existing source dataset,
+transport payload, stable identity formulas and at-least-once handoff remain.

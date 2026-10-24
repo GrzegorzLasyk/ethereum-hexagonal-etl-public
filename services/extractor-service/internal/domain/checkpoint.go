@@ -7,7 +7,9 @@ import (
 
 // Checkpoint is the last block committed with its source data and outbox intent.
 type Checkpoint struct {
-	Block BlockID
+	Block    BlockID
+	Revision uint64
+	Start    uint64
 }
 
 // CheckPosition permits initial extraction, immediate continuation, and retry
