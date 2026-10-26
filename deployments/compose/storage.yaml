@@ -1,0 +1,26 @@
+# Test-only restore destination: fresh cluster, no application database or roles.
+# Invoked only by the isolated Stage 12.5 harness. No host port is published.
+services:
+  restore:
+    image: postgres:17.11-bookworm
+    profiles: ["fixture"]
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+      EXTRACTOR_MIGRATOR_PASSWORD: ${EXTRACTOR_MIGRATOR_PASSWORD:?required}
+      EXTRACTOR_RUNTIME_PASSWORD: ${EXTRACTOR_RUNTIME_PASSWORD:?required}
+      TRANSFORMER_MIGRATOR_PASSWORD: ${TRANSFORMER_MIGRATOR_PASSWORD:?required}
+      TRANSFORMER_RUNTIME_PASSWORD: ${TRANSFORMER_RUNTIME_PASSWORD:?required}
+      LOADER_MIGRATOR_PASSWORD: ${LOADER_MIGRATOR_PASSWORD:?required}
+      LOADER_RUNTIME_PASSWORD: ${LOADER_RUNTIME_PASSWORD:?required}
+    volumes:
+      - restore_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "PGPASSWORD=\"$$POSTGRES_PASSWORD\" psql -X -w -h 127.0.0.1 -U postgres -d postgres -tAc 'SELECT 1' >/dev/null"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    stop_grace_period: 30s
+volumes:
+  restore_data:

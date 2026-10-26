@@ -198,3 +198,31 @@ func TestPreserveToolSettings(t *testing.T) {
 		t.Fatal("tool settings removed")
 	}
 }
+
+// Retain mode must preserve the private configuration and never request volume deletion.
+func TestRetainResources(t *testing.T) {
+	var filename string
+	stopped := false
+	err := run(context.Background(), t.TempDir(), []string{"ETL_TEST_RETAIN=1"}, 54321, func(_ context.Context, c command) error {
+		if c.program == "docker" {
+			filename = argAfter(t, c.args, "--env-file")
+			for _, arg := range c.args {
+				if arg == "down" || arg == "--volumes" {
+					t.Fatal("destructive cleanup in retained mode")
+				}
+			}
+			if c.phase == "cleanup" {
+				stopped = reflect.DeepEqual(c.args[len(c.args)-3:], []string{"stop", "-t", "30"})
+			}
+		}
+		return nil
+	})
+	if err != nil || !stopped {
+		t.Fatal("retain lifecycle failed", err)
+	}
+	if info, err := os.Stat(filename); err != nil || info.Mode().Perm() != 0600 {
+		t.Fatal("private configuration not retained")
+	}
+	// This fake created no database; remove only its test credential file.
+	t.Cleanup(func() { _ = os.Remove(filename) })
+}

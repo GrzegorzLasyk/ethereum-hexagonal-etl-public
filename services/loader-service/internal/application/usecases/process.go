@@ -32,7 +32,7 @@ func (u *Process) ProcessOne(ctx context.Context) (inbound.ProcessResult, error)
 	if item == nil {
 		return inbound.ProcessResult{}, nil
 	}
-	progress := inbound.ProcessResult{Found: true, EventID: item.Event.EventID, Attempt: item.Attempt}
+	progress := inbound.ProcessResult{Found: true, EventID: item.Event.EventID, SourceEventID: item.Event.SourceEventID, Attempt: item.Attempt}
 	result, err := u.decode(ctx, item.Event)
 	if err == nil {
 		err = u.queue.Complete(ctx, *item, result)
@@ -50,6 +50,7 @@ func (u *Process) ProcessOne(ctx context.Context) (inbound.ProcessResult, error)
 		return progress, ctx.Err()
 	} // lease recovery after shutdown
 	failure := classify(err)
+	progress.ErrorCode = failure.Code
 	failure.Delay = u.backoff(item.Attempt)
 	if saveErr := u.queue.Fail(ctx, *item, failure); saveErr != nil {
 		return progress, fmt.Errorf("record failure: %w", saveErr)

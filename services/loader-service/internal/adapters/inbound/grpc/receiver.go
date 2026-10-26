@@ -5,9 +5,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"time"
 
 	etlv1 "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/gen/etl/v1"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/grpccontract"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/logevent"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/adapters/logging"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/application/ports/inbound"
 	grpcgo "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -15,6 +19,7 @@ import (
 )
 
 type Receiver struct {
+	logger *slog.Logger
 	etlv1.UnimplementedLoaderServiceServer
 	acceptor inbound.TransformedBlockAcceptor
 	chainID  string
@@ -25,20 +30,24 @@ var _ etlv1.LoaderServiceServer = (*Receiver)(nil)
 
 // NewReceiver requires an explicit chain and validated transport budgets.
 // A nil acceptor is the Stage 6 skeleton: valid requests return Unimplemented.
-func NewReceiver(chainID string, limits grpccontract.Limits, acceptor inbound.TransformedBlockAcceptor) (*Receiver, error) {
+func NewReceiver(chainID string, limits grpccontract.Limits, acceptor inbound.TransformedBlockAcceptor, loggers ...*slog.Logger) (*Receiver, error) {
 	if !grpccontract.ValidChainID(chainID) {
 		return nil, fmt.Errorf("receiver requires a canonical decimal chain ID")
 	}
 	if err := limits.Validate(); err != nil {
 		return nil, err
 	}
-	return &Receiver{acceptor: acceptor, chainID: chainID, limits: limits}, nil
+	var logger *slog.Logger
+	if len(loggers) > 0 {
+		logger = loggers[0]
+	}
+	return &Receiver{logger: logger, acceptor: acceptor, chainID: chainID, limits: limits}, nil
 }
 
 // NewServer registers the receiver and applies matching send/receive bounds.
 // It opens no listener. Composition roots own serving and graceful shutdown.
-func NewServer(chainID string, limits grpccontract.Limits, acceptor inbound.TransformedBlockAcceptor) (*grpcgo.Server, error) {
-	receiver, err := NewReceiver(chainID, limits, acceptor)
+func NewServer(chainID string, limits grpccontract.Limits, acceptor inbound.TransformedBlockAcceptor, loggers ...*slog.Logger) (*grpcgo.Server, error) {
+	receiver, err := NewReceiver(chainID, limits, acceptor, loggers...)
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +60,18 @@ func NewServer(chainID string, limits grpccontract.Limits, acceptor inbound.Tran
 	return server, nil
 }
 
-func (r *Receiver) SubmitTransformedBlock(ctx context.Context, req *etlv1.SubmitTransformedBlockRequest) (*etlv1.SubmitTransformedBlockResponse, error) {
+func (r *Receiver) SubmitTransformedBlock(ctx context.Context, req *etlv1.SubmitTransformedBlockRequest) (response *etlv1.SubmitTransformedBlockResponse, returnedErr error) {
+	started := time.Now()
+	event := logevent.Event{Service: "loader-service", Operation: "accept_inbox", Outcome: "accepted"}
+	defer func() {
+		if returnedErr != nil {
+			if event.ErrorCode == "" {
+				event.ErrorCode = transportErrorCode(returnedErr)
+			}
+			event.Outcome = logevent.FailureOutcome(event.ErrorCode)
+		}
+		logevent.Write(ctx, r.logger, event, started)
+	}()
 	if err := ctx.Err(); err != nil {
 		return nil, acceptanceError(err)
 	}
@@ -64,6 +84,8 @@ func (r *Receiver) SubmitTransformedBlock(ctx context.Context, req *etlv1.Submit
 	if err := grpccontract.ValidateMetadata(req.Metadata, "transformed-block", r.chainID); err != nil {
 		return nil, err
 	}
+	event.EventID = req.Metadata.EventId
+	event.SourceEventID = req.SourceEventId
 	if err := r.limits.CheckPayload(req.PayloadJson); err != nil {
 		return nil, err
 	}
@@ -93,6 +115,7 @@ func (r *Receiver) SubmitTransformedBlock(ctx context.Context, req *etlv1.Submit
 	}
 	result, err := r.acceptor.AcceptTransformedBlock(ctx, request)
 	if err != nil {
+		event.ErrorCode = logging.ErrorCode(err)
 		return nil, acceptanceError(err)
 	}
 	// The port must positively attest to a committed inbox record. Do not turn a
@@ -102,6 +125,7 @@ func (r *Receiver) SubmitTransformedBlock(ctx context.Context, req *etlv1.Submit
 	case inbound.DurablyAccepted:
 		outcome = etlv1.AcceptanceStatus_ACCEPTANCE_STATUS_DURABLY_ACCEPTED
 	case inbound.AlreadyAccepted:
+		event.Outcome = "already_accepted"
 		outcome = etlv1.AcceptanceStatus_ACCEPTANCE_STATUS_ALREADY_ACCEPTED
 	default:
 		return nil, status.Error(codes.Internal, "acceptance did not confirm a durable inbox record")
@@ -131,5 +155,26 @@ func acceptanceError(err error) error {
 		return status.Error(codes.Unimplemented, "durable inbox acceptance is not implemented")
 	default:
 		return status.Error(codes.Internal, "durable inbox acceptance failed")
+	}
+}
+
+func transportErrorCode(err error) string {
+	switch status.Code(err) {
+	case codes.Canceled:
+		return "canceled"
+	case codes.DeadlineExceeded:
+		return "deadline_exceeded"
+	case codes.InvalidArgument:
+		return "invalid"
+	case codes.FailedPrecondition:
+		return "unsupported"
+	case codes.ResourceExhausted:
+		return "oversize"
+	case codes.AlreadyExists:
+		return "conflict"
+	case codes.Unavailable:
+		return "unavailable"
+	default:
+		return "operation_failed"
 	}
 }

@@ -50,7 +50,7 @@ func TestDispatchAcknowledgementBoundary(t *testing.T) {
 		{name: "stale worker ACK", commit: outbound.ErrDeliveryLeaseLost, published: 1},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := &deliveryFake{item: &outbound.Delivery{Event: outbound.Publication{EventID: "stable"}, Attempt: 2, MaxAttempts: 3}, publishErr: tc.commit}
+			f := &deliveryFake{item: &outbound.Delivery{Event: outbound.Publication{EventID: "stable", SourceEventID: "source"}, Attempt: 2, MaxAttempts: 3}, publishErr: tc.commit}
 			u, e := NewDispatch(f, publisherFunc(func(ctx context.Context, p outbound.Publication) error {
 				if p.EventID != "stable" {
 					t.Fatal("changed identity")
@@ -64,6 +64,9 @@ func TestDispatchAcknowledgementBoundary(t *testing.T) {
 				t.Fatal(e)
 			}
 			result, e := u.DispatchOne(t.Context())
+			if result.EventID != "stable" || result.Attempt != 2 || result.ErrorCode != tc.code || result.SourceEventID != "source" {
+				t.Fatalf("lost correlation: %+v", result)
+			}
 			if !errors.Is(e, tc.commit) || result.Outcome != tc.outcome || f.published != tc.published || f.retried != tc.retried || f.failure.Code != tc.code || f.failure.Permanent != tc.permanent {
 				t.Fatalf("result=%+v err=%v queue=%+v", result, e, f)
 			}

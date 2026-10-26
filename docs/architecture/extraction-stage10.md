@@ -1,5 +1,10 @@
 # Ordered extraction, recovery and operator commands (Stage 10)
 
+Current operations, storage preservation, failed-work limitations and release
+checks are consolidated in the [Stage 12.5 runbook](operations-stage12.md).
+Earlier exclusions below describe the original stage's scope, not missing current
+health, metrics, dispatch or local deployment.
+
 Stage 10 implements sequential inclusive ranges, follow-head, required confirmation
 depth, bounded reorg recovery, backpressure, replay and restartable reindex.
 [ADR 0004](../adr/0004-ordered-extraction-reorg-recovery.md) is accepted and amends

@@ -48,3 +48,8 @@ config.local.yml
 
 # Private notes
 README-priv.md
+
+# Local database backups and private release evidence
+*.dump
+*.backup
+/storage-evidence/

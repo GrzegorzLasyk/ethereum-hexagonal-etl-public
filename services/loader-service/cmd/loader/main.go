@@ -11,10 +11,14 @@ import (
 	"time"
 
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/health"
-
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/metrics"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/logevent"
 	receiver "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/adapters/inbound/grpc"
+	servicemetrics "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/adapters/inbound/metrics"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/adapters/inbound/worker"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/adapters/logging"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/adapters/outbound/jsondocument"
+	persistmetrics "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/adapters/outbound/metrics"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/adapters/outbound/postgres"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/application/usecases"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/config"
@@ -24,21 +28,23 @@ import (
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil)).With("service", "loader-service")
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	started := time.Now()
 	cfg, err := config.Load()
 	if err != nil {
-		logger.Error("invalid configuration", "error", err)
+		logevent.Write(ctx, logger, logevent.Event{Service: "loader-service", Operation: "configure", Outcome: "failed", ErrorCode: "invalid_configuration"}, started)
 		os.Exit(1)
 	}
-	logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel})).With("service", "loader-service")
+	logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	if err := run(ctx, cfg, logger); err != nil {
-		logger.Error("loader stopped", "error", err)
+		logevent.Write(ctx, logger, logevent.Event{Service: "loader-service", Operation: "run", Outcome: logevent.FailureOutcome(logging.ErrorCode(err)), ErrorCode: logging.ErrorCode(err)}, started)
 		os.Exit(1)
 	}
 }
 
 // run is the composition root: all workflow decisions live in use cases.
 func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
+	started := time.Now()
 	pc, err := pgxpool.ParseConfig(cfg.DatabaseURL)
 	if err != nil {
 		return errors.New("invalid database configuration")
@@ -58,6 +64,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil || role != "loader_runtime" || db != "ethereum_etl" {
 		return errors.New("database requires loader_runtime in ethereum_etl")
 	}
+	registry := metrics.New("process_inbox", "claim_inbox", "persist_block")
 	store, err := postgres.New(pool, cfg.ChainID, cfg.Lease, cfg.MaxAttempts)
 	if err != nil {
 		return err
@@ -66,15 +73,15 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	process, err := usecases.NewProcess(store, jsondocument.Decoder{}, cfg.InitialBackoff, cfg.MaxBackoff)
+	process, err := usecases.NewProcess(persistmetrics.Queue{Queue: store, Registry: registry}, jsondocument.Decoder{}, cfg.InitialBackoff, cfg.MaxBackoff)
 	if err != nil {
 		return err
 	}
-	runner, err := worker.New(process, logger, cfg.Workers, cfg.PollInterval, cfg.ProcessTimeout)
+	runner, err := worker.New(process, logger, cfg.Workers, cfg.PollInterval, cfg.ProcessTimeout, registry)
 	if err != nil {
 		return err
 	}
-	server, err := receiver.NewServer(string(cfg.ChainID), cfg.Limits, accept)
+	server, err := receiver.NewServer(string(cfg.ChainID), cfg.Limits, accept, logger)
 	if err != nil {
 		return err
 	}
@@ -83,7 +90,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return errors.New("cannot open gRPC listener")
 	}
 	defer listener.Close()
-	closeHealth, err := health.Start(ctx, os.Getenv("LOADER_HEALTH_ADDRESS"), pool.Ping)
+	closeHealth, err := health.Start(ctx, os.Getenv("LOADER_HEALTH_ADDRESS"), store.CheckReadiness, servicemetrics.Handler(store, registry))
 	if err != nil {
 		return err
 	}
@@ -94,7 +101,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	go func() { runner.Run(working); close(workerDone) }()
 	serving := make(chan error, 1)
 	go func() { serving <- server.Serve(listener) }()
-	logger.Info("loader started", "address", cfg.ListenAddress, "chain_id", cfg.ChainID, "workers", cfg.Workers)
+	logevent.Write(ctx, logger, logevent.Event{Service: "loader-service", Operation: "run", ChainID: string(cfg.ChainID), Outcome: "started"}, started)
 	var serveErr error
 	select {
 	case <-ctx.Done():
@@ -112,7 +119,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		<-graceful
 	}
 	<-workerDone
-	logger.Info("loader stopped")
+	logevent.Write(ctx, logger, logevent.Event{Service: "loader-service", Operation: "run", ChainID: string(cfg.ChainID), Outcome: "stopped"}, started)
 	if serveErr != nil {
 		return errors.New("gRPC serving failed")
 	}

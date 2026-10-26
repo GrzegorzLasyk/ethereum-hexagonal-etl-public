@@ -52,6 +52,8 @@ func integrationPool(t *testing.T, variable, role string) *pgxpool.Pool {
 func TestPostgresIntegration(t *testing.T) {
 	runtime := integrationPool(t, "EXTRACTOR_TEST_DATABASE_URL", "extractor_runtime")
 	owner := integrationPool(t, "EXTRACTOR_TEST_MIGRATOR_URL", "extractor_migrator")
+	t.Run("operational metrics", func(t *testing.T) { testMetrics(t, runtime, owner) })
+	t.Run("schema readiness", func(t *testing.T) { testReadiness(t, runtime, owner) })
 	t.Run("stage10 indexing", func(t *testing.T) { testIndexing(t, runtime, owner) })
 	t.Run("outbox delivery", func(t *testing.T) { testOutbox(t, runtime, owner) })
 	ctx := t.Context()

@@ -135,6 +135,9 @@ func TestProcessingAndProvenanceBinding(t *testing.T) {
 			tt.change(&r)
 			s := &fakeStore{item: &outbound.Item{Event: r, Attempt: 1, MaxAttempts: 3}}
 			got, e := processor(t, s).ProcessOne(t.Context())
+			if got.EventID != s.item.Event.EventID || got.Attempt != s.item.Attempt || got.SourceEventID != s.item.Event.SourceEventID {
+				t.Fatalf("lost correlation: %+v", got)
+			}
 			if e != nil {
 				t.Fatal(e)
 			}
@@ -152,6 +155,9 @@ func TestRetryCancellationAndAmbiguousCommit(t *testing.T) {
 	for _, failure := range []error{inbound.ErrUnavailable, inbound.ErrConflict, outbound.ErrCommitUnknown, outbound.ErrLeaseLost} {
 		s := &fakeStore{item: &outbound.Item{Event: event(t), Attempt: 2, MaxAttempts: 3}, completeErr: failure}
 		got, e := processor(t, s).ProcessOne(t.Context())
+		if got.EventID != s.item.Event.EventID || got.Attempt != s.item.Attempt || got.SourceEventID != s.item.Event.SourceEventID {
+			t.Fatalf("lost correlation: %+v", got)
+		}
 		if errors.Is(failure, outbound.ErrCommitUnknown) || errors.Is(failure, outbound.ErrLeaseLost) {
 			if !errors.Is(e, failure) || s.failure != nil {
 				t.Fatal("ambiguous/stale state overwritten", e)

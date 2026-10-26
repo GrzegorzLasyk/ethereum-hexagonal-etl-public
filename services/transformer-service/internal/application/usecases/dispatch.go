@@ -31,7 +31,7 @@ func (u *Dispatch) DispatchOne(ctx context.Context) (inbound.DispatchResult, err
 	if item == nil {
 		return inbound.DispatchResult{}, nil
 	}
-	result := inbound.DispatchResult{Found: true, EventID: item.Event.EventID, Attempt: item.Attempt}
+	result := inbound.DispatchResult{Found: true, EventID: item.Event.EventID, SourceEventID: item.Event.SourceEventID, Attempt: item.Attempt}
 	call, cancel := context.WithTimeout(ctx, u.rpcTimeout)
 	err = u.publisher.Publish(call, item.Event)
 	cancel()
@@ -61,6 +61,7 @@ func (u *Dispatch) DispatchOne(ctx context.Context) (inbound.DispatchResult, err
 	case errors.Is(err, outbound.ErrPublishACK):
 		failure.Code = "invalid_ack"
 	}
+	result.ErrorCode = failure.Code
 	if err = u.queue.RetryDelivery(ctx, *item, failure); err != nil {
 		return result, err
 	}

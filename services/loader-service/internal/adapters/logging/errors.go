@@ -1,0 +1,34 @@
+package logging
+
+import (
+	"errors"
+
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/logevent"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/application/ports/inbound"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/application/ports/outbound"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/domain"
+)
+
+// ErrorCode exposes only reviewed categories, never underlying error text.
+func ErrorCode(err error) string {
+	for _, entry := range []struct {
+		err  error
+		code string
+	}{
+		{outbound.ErrCommitUnknown, "commit_unknown"},
+		{outbound.ErrLeaseLost, "lease_lost"},
+		{inbound.ErrUnavailable, "unavailable"},
+		{inbound.ErrInvalidEvent, "invalid"},
+		{inbound.ErrUnsupportedVersion, "unsupported"},
+		{inbound.ErrConflict, "conflict"},
+		{domain.ErrInvalid, "invalid"},
+		{domain.ErrIdentity, "identity"},
+		{domain.ErrUnsupported, "unsupported"},
+		{domain.ErrIncomplete, "incomplete"},
+	} {
+		if errors.Is(err, entry.err) {
+			return entry.code
+		}
+	}
+	return logevent.ErrorCode(err)
+}

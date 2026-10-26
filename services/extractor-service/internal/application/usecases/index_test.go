@@ -3,6 +3,7 @@ package usecases_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"reflect"
 	"testing"
@@ -222,6 +223,9 @@ func TestIndexShallowReorgAndRetainedHistory(t *testing.T) {
 	if e != nil || !r.Rewound || b.cp.Block.Number != 11 || b.cp.Revision != 1 {
 		t.Fatalf("rewind %+v %v", r, e)
 	}
+	if r.Block == nil || *r.Block != old || r.Ancestor == nil || *r.Ancestor != b.cp.Block || !r.Recovering {
+		t.Fatal("recovery identity lost", r)
+	}
 	if _, ok := b.retained[old.EventID()]; !ok {
 		t.Fatal("lost historical observation")
 	}
@@ -352,6 +356,9 @@ func (b *branchFixture) OpenReindex(_ context.Context, r outbound.ReindexRequest
 	return b.job, nil
 }
 func (b *branchFixture) CommitReindex(_ context.Context, s outbound.ReindexState, e domain.Extraction, _ domain.CapacityLimits) error {
+	if b.commitErr != nil {
+		return b.commitErr
+	}
 	if !reflect.DeepEqual(s, b.job) {
 		return domain.ErrCheckpointConflict
 	}
@@ -380,7 +387,7 @@ func TestReindexRestartsWithoutChangingLiveCursor(t *testing.T) {
 		t.Fatal(err)
 	}
 	r, err := u.Cycle(t.Context())
-	if err != nil || r.Processed != 2 {
+	if err != nil || r.Processed != 2 || !r.Reindex || len(r.Completed) != 2 {
 		t.Fatalf("reindex %+v %v", r, err)
 	}
 	u, err = usecases.NewReindex(o, "repair-1", b, b, b)
@@ -417,5 +424,98 @@ func TestIndexRejectsSameIdentityWithChangedParent(t *testing.T) {
 	b.blocks[13] = e
 	if _, err := index(t, b, opts()).Cycle(t.Context()); !errors.Is(err, domain.ErrUnstableChain) || *b.cp != before || b.rewinds != 0 {
 		t.Fatal(err)
+	}
+}
+
+func TestIndexProgressPreservesBatchAndFailedIdentity(t *testing.T) {
+	b := newBranch()
+	o := opts()
+	o.Batch = 2
+	r, err := index(t, b, o).Cycle(t.Context())
+	if err != nil || len(r.Completed) != 2 || r.Completed[0].Block != b.blocks[10].Header.ID || r.Completed[1].Block != b.blocks[11].Header.ID {
+		t.Fatal("lost batch identity", r, err)
+	}
+	b.commitErr = outbound.ErrCommitUnknown
+	r, err = index(t, b, o).Cycle(t.Context())
+	if !errors.Is(err, outbound.ErrCommitUnknown) || r.Block == nil || *r.Block != b.blocks[12].Header.ID || len(r.Completed) != 0 {
+		t.Fatal("lost ambiguous commit identity", r, err)
+	}
+	b.blockErr = testFailure
+	r, err = index(t, b, o).Cycle(t.Context())
+	if err == nil || r.Block != nil || r.Next == nil || *r.Next != 12 || r.ChainID != "1" {
+		t.Fatal("fetch failure invented hash or lost height", r, err)
+	}
+}
+
+func TestFailedBatchRetainsEarlierCommittedIdentity(t *testing.T) {
+	b := newBranch()
+	e := b.blocks[11]
+	e.RawBlock = nil
+	b.blocks[11] = e
+	r, err := index(t, b, opts()).Cycle(t.Context())
+	if err == nil || len(r.Completed) != 1 || r.Completed[0].Block != b.blocks[10].Header.ID || r.Block == nil || *r.Block != b.blocks[11].Header.ID {
+		t.Fatal(r, err)
+	}
+}
+
+func TestReindexAmbiguousCommitKeepsIdentity(t *testing.T) {
+	b := newBranch()
+	b.commitErr = outbound.ErrCommitUnknown
+	o := opts()
+	end := uint64(11)
+	o.End = &end
+	u, err := usecases.NewReindex(o, "repair-log", b, b, b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := u.Cycle(t.Context())
+	if !errors.Is(err, outbound.ErrCommitUnknown) || !r.Reindex || r.Block == nil || *r.Block != b.blocks[10].Header.ID || len(r.Completed) != 0 {
+		t.Fatal(r, err)
+	}
+}
+
+type activeReadFailure struct {
+	*branchFixture
+	calls, failAt int
+	err           error
+}
+
+func (s *activeReadFailure) ActiveHeader(ctx context.Context, n uint64) (domain.Header, error) {
+	s.calls++
+	if s.calls == s.failAt {
+		return domain.Header{}, s.err
+	}
+	return s.branchFixture.ActiveHeader(ctx, n)
+}
+
+func TestActiveReadFailureDoesNotInventMissingAncestry(t *testing.T) {
+	for _, recovery := range []bool{false, true} {
+		for _, cause := range []error{errors.New("database offline"), context.Canceled, context.DeadlineExceeded, domain.ErrUnavailable} {
+			t.Run(fmt.Sprintf("recovery=%v/%v", recovery, cause), func(t *testing.T) {
+				b := newBranch()
+				seed(t, b, 14)
+				before := *b.cp
+				store := &activeReadFailure{branchFixture: b, failAt: 1, err: cause}
+				if recovery {
+					fork(b, 13)
+					store.failAt = 3
+				}
+				u, err := usecases.NewIndex(opts(), b, b, store)
+				if err != nil {
+					t.Fatal(err)
+				}
+				_, err = u.Cycle(t.Context())
+				if !errors.Is(err, cause) || errors.Is(err, domain.ErrRecoveryRequired) != errors.Is(cause, domain.ErrUnavailable) {
+					t.Fatalf("incorrect error classification: %v", err)
+				}
+				if *b.cp != before || b.rewinds != 0 {
+					t.Fatal("failed read changed progress")
+				}
+				store.failAt = 0
+				if _, err = u.Cycle(t.Context()); err != nil {
+					t.Fatalf("read recovery failed: %v", err)
+				}
+			})
+		}
 	}
 }

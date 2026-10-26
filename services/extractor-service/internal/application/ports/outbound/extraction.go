@@ -2,6 +2,7 @@ package outbound
 
 import (
 	"context"
+	"errors"
 
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
@@ -44,3 +45,6 @@ type ExtractionStore interface {
 	Checkpoint(context.Context, domain.ChainID) (*domain.Checkpoint, error)
 	Commit(context.Context, CommitExtraction) (CommitResult, error)
 }
+
+// ErrCommitUnknown requires rereading durable state or retrying the same identity.
+var ErrCommitUnknown = errors.New("extraction transaction outcome unknown; retry the same operation")

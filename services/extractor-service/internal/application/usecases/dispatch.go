@@ -61,6 +61,7 @@ func (u *Dispatch) DispatchOne(ctx context.Context) (inbound.DispatchResult, err
 	case errors.Is(err, outbound.ErrPublishACK):
 		failure.Code = "invalid_ack"
 	}
+	result.ErrorCode = failure.Code
 	if err = u.queue.RetryDelivery(ctx, *item, failure); err != nil {
 		return result, err
 	}

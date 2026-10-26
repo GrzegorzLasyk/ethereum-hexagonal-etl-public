@@ -12,7 +12,7 @@ import (
 
 // Start binds only loopback. Readiness checks the owning service's dependencies;
 // a downstream outage must not make a durable receiver unready.
-func Start(ctx context.Context, address string, check func(context.Context) error) (func(), error) {
+func Start(ctx context.Context, address string, check func(context.Context) error, metrics ...http.Handler) (func(), error) {
 	if address == "" {
 		return func() {}, nil
 	}
@@ -24,10 +24,12 @@ func Start(ctx context.Context, address string, check func(context.Context) erro
 	if err != nil {
 		return nil, errors.New("cannot open health listener")
 	}
-	s := &http.Server{Handler: handler(ctx, check), ReadHeaderTimeout: time.Second, WriteTimeout: 3 * time.Second}
+	serving, stop := context.WithCancel(ctx)
+	s := &http.Server{Handler: Handler(serving, check, metrics...), ReadHeaderTimeout: time.Second, WriteTimeout: 3 * time.Second}
 	done := make(chan struct{})
 	go func() { _ = s.Serve(l); close(done) }()
 	return func() {
+		stop()
 		shutdown, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		if s.Shutdown(shutdown) != nil {
@@ -37,8 +39,12 @@ func Start(ctx context.Context, address string, check func(context.Context) erro
 	}, nil
 }
 
-func handler(ctx context.Context, check func(context.Context) error) http.Handler {
+// Handler builds the routes; Start additionally enforces trusted listener binding.
+func Handler(ctx context.Context, check func(context.Context) error, metrics ...http.Handler) http.Handler {
 	mux := http.NewServeMux()
+	if len(metrics) > 0 && metrics[0] != nil {
+		mux.Handle("GET /metrics", metrics[0])
+	}
 	mux.HandleFunc("GET /live", func(w http.ResponseWriter, r *http.Request) {
 		if ctx.Err() != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -49,7 +55,9 @@ func handler(ctx context.Context, check func(context.Context) error) http.Handle
 	mux.HandleFunc("GET /ready", func(w http.ResponseWriter, r *http.Request) {
 		call, cancel := context.WithTimeout(r.Context(), time.Second)
 		defer cancel()
-		if ctx.Err() != nil || check(call) != nil {
+		stop := context.AfterFunc(ctx, cancel)
+		defer stop()
+		if ctx.Err() != nil || check(call) != nil || call.Err() != nil || ctx.Err() != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			return
 		}

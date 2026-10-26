@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"time"
 
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/application/ports/inbound"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/application/ports/outbound"
@@ -64,9 +65,13 @@ func validHeader(h domain.Header, chain domain.ChainID, n uint64) error {
 	}
 	return nil
 }
-func (u *Index) Cycle(ctx context.Context) (inbound.IndexResult, error) {
-	var result inbound.IndexResult
+func (u *Index) Cycle(ctx context.Context) (result inbound.IndexResult, err error) {
+	result.ChainID = string(u.options.Chain)
+	started := time.Now()
+	defer func() { result.Duration = time.Since(started) }()
 	for result.Processed < u.options.Batch {
+		started = time.Now()
+		result.Block, result.Next = nil, nil
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
@@ -77,6 +82,7 @@ func (u *Index) Cycle(ctx context.Context) (inbound.IndexResult, error) {
 		if cp != nil {
 			copy := *cp
 			cp = &copy
+			result.Block = &cp.Block
 			if cp.Block.Number < u.options.Start {
 				return result, domain.ErrCheckpointConflict
 			}
@@ -88,6 +94,9 @@ func (u *Index) Cycle(ctx context.Context) (inbound.IndexResult, error) {
 		if err := validHeader(head, u.options.Chain, head.ID.Number); err != nil {
 			return result, err
 		}
+		height := head.ID.Number
+		result.Head = &height
+		result.HeadObservedAt = time.Now()
 		if cp != nil {
 			if head.ID.Number < cp.Block.Number {
 				return result, fmt.Errorf("%w: provider head below checkpoint", domain.ErrRecoveryRequired)
@@ -104,7 +113,10 @@ func (u *Index) Cycle(ctx context.Context) (inbound.IndexResult, error) {
 			}
 			local, err := u.store.ActiveHeader(ctx, cp.Block.Number)
 			if err != nil {
-				return result, fmt.Errorf("%w: checkpoint missing from active branch: %w", domain.ErrRecoveryRequired, err)
+				if errors.Is(err, domain.ErrUnavailable) {
+					return result, fmt.Errorf("%w: checkpoint missing from active branch: %w", domain.ErrRecoveryRequired, err)
+				}
+				return result, fmt.Errorf("read active checkpoint: %w", err)
 			}
 			if local.ID != cp.Block {
 				return result, domain.ErrCheckpointConflict
@@ -113,7 +125,8 @@ func (u *Index) Cycle(ctx context.Context) (inbound.IndexResult, error) {
 				return result, domain.ErrUnstableChain
 			}
 			if tip.ID != cp.Block {
-				if err := u.reconcile(ctx, *cp, tip, head); err != nil {
+				result.Recovering = true
+				if err := u.reconcile(ctx, *cp, tip, head, &result); err != nil {
 					return result, err
 				}
 				result.Rewound = true
@@ -128,6 +141,8 @@ func (u *Index) Cycle(ctx context.Context) (inbound.IndexResult, error) {
 		if cp != nil {
 			next = cp.Block.Number + 1
 		}
+		result.Block = nil
+		result.Next = &next
 		eligible, ok := domain.EligibleHeight(head.ID.Number, u.options.Confirmations)
 		if !ok || next > eligible {
 			result.Waiting = true
@@ -145,6 +160,7 @@ func (u *Index) Cycle(ctx context.Context) (inbound.IndexResult, error) {
 		if err != nil {
 			return result, fmt.Errorf("fetch block %d: %w", next, err)
 		}
+		result.Block = &e.Header.ID
 		if err := e.Validate(); err != nil {
 			return result, err
 		}
@@ -167,6 +183,7 @@ func (u *Index) Cycle(ctx context.Context) (inbound.IndexResult, error) {
 			return result, err
 		}
 		result.Processed++
+		result.Completed = append(result.Completed, inbound.IndexedBlock{Block: e.Header.ID, Duration: time.Since(started)})
 	}
 	return result, nil
 }
@@ -182,7 +199,7 @@ func verifyObservation(ctx context.Context, o outbound.ChainObserver, block, anc
 	}
 	return nil
 }
-func (u *Index) reconcile(ctx context.Context, cp domain.Checkpoint, tip, head domain.Header) error {
+func (u *Index) reconcile(ctx context.Context, cp domain.Checkpoint, tip, head domain.Header, progress *inbound.IndexResult) error {
 	current := tip
 	var oldChild *domain.Header
 	for depth := uint64(0); ; depth++ {
@@ -191,7 +208,10 @@ func (u *Index) reconcile(ctx context.Context, cp domain.Checkpoint, tip, head d
 		}
 		local, err := u.store.ActiveHeader(ctx, current.ID.Number)
 		if err != nil {
-			return fmt.Errorf("%w: retained ancestor unavailable: %w", domain.ErrRecoveryRequired, err)
+			if errors.Is(err, domain.ErrUnavailable) {
+				return fmt.Errorf("%w: retained ancestor unavailable: %w", domain.ErrRecoveryRequired, err)
+			}
+			return fmt.Errorf("read retained ancestor: %w", err)
 		}
 		if err := validHeader(local, u.options.Chain, current.ID.Number); err != nil {
 			return err
@@ -212,6 +232,8 @@ func (u *Index) reconcile(ctx context.Context, cp domain.Checkpoint, tip, head d
 			if err := verifyObservation(ctx, u.observer, tip, head); err != nil {
 				return err
 			}
+			ancestor := current.ID
+			progress.Ancestor = &ancestor
 			return u.store.Rewind(ctx, cp, current.ID)
 		}
 		if depth == u.options.RecoveryDepth || current.ID.Number == u.options.Start {

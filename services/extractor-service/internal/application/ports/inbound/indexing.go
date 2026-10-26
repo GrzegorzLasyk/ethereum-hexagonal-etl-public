@@ -1,8 +1,27 @@
 package inbound
 
-import "context"
+import (
+	"context"
+	"time"
 
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
+)
+
+// IndexedBlock records only a confirmed durable commit, without source payloads.
+type IndexedBlock struct {
+	Block    domain.BlockID
+	Duration time.Duration
+}
 type IndexResult struct {
+	Head                                 *uint64
+	HeadObservedAt                       time.Time
+	ChainID                              string
+	Block                                *domain.BlockID
+	Next                                 *uint64
+	Completed                            []IndexedBlock
+	Recovering, Reindex                  bool
+	Ancestor                             *domain.BlockID
+	Duration                             time.Duration
 	Processed                            int
 	Done, Waiting, Rewound, Backpressure bool
 }

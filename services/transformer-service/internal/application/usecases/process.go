@@ -51,6 +51,7 @@ func (u *Process) ProcessOne(ctx context.Context) (inbound.ProcessResult, error)
 		return progress, ctx.Err()
 	} // lease recovery after shutdown
 	failure := classify(err)
+	progress.ErrorCode = failure.Code
 	failure.Delay = u.backoff(item.Attempt)
 	if saveErr := u.queue.Fail(ctx, *item, failure); saveErr != nil {
 		return progress, fmt.Errorf("record failure: %w", saveErr)
