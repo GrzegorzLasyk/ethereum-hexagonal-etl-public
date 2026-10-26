@@ -135,6 +135,10 @@ func run(ctx context.Context, root string, parent []string, port, fixturePort in
 		return errors.New("cannot create private test configuration")
 	}
 	defer func() {
+		if retainResources(parent) {
+			fmt.Fprintf(os.Stdout, "Retained project %s; private configuration: %s\n", project, file.Name())
+			return
+		}
 		if err := os.Remove(file.Name()); err != nil {
 			result = errors.Join(result, errors.New("cannot remove temporary credential file"))
 		}
@@ -151,6 +155,11 @@ func run(ctx context.Context, root string, parent []string, port, fixturePort in
 	}
 	env := isolatedEnvironment(parent)
 	base := []string{"compose", "--env-file", file.Name(), "-p", project, "-f", filepath.Join(root, composeFile), "-f", filepath.Join(root, "deployments/compose/fixture.yaml"), "--profile", "fixture"}
+	for _, entry := range parent {
+		if entry == "ETL_STORAGE_VERIFY=1" {
+			base = append(base, "-f", filepath.Join(root, "deployments/compose/storage.yaml"))
+		}
+	}
 	docker := func(phase string, args ...string) command {
 		return command{phase: phase, program: "docker", root: root, args: append(append([]string{}, base...), args...), env: env, secrets: secrets}
 	}
@@ -159,7 +168,11 @@ func run(ctx context.Context, root string, parent []string, port, fixturePort in
 		// newly generated project and its volume are eligible for deletion.
 		cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		if err := invoke(cleanup, docker("cleanup", "down", "--volumes", "--remove-orphans")); err != nil {
+		args := []string{"down", "--volumes", "--remove-orphans"}
+		if retainResources(parent) {
+			args = []string{"stop", "-t", "30"}
+		}
+		if err := invoke(cleanup, docker("cleanup", args...)); err != nil {
 			result = errors.Join(result, fmt.Errorf("cleanup failed for project %s: %w", project, err))
 		}
 	}()
@@ -188,9 +201,9 @@ func run(ctx context.Context, root string, parent []string, port, fixturePort in
 		testEnv = append(testEnv, service+"_TEST_DATABASE_URL="+url)
 		secrets = append([]string{url}, secrets...)
 	}
-	testCtx, cancel := context.WithTimeout(ctx, 7*time.Minute)
+	testCtx, cancel := context.WithTimeout(ctx, 12*time.Minute)
 	defer cancel()
-	return invoke(testCtx, command{phase: "full Compose fixture E2E", program: "go", root: root, env: testEnv, secrets: secrets, args: []string{"test", "-tags", "composeintegration", "-race", "-run", "^TestFixtureE2E$", "-count=1", "-timeout=6m", "-v", "./test/integration/fixture"}})
+	return invoke(testCtx, command{phase: "full Compose fixture E2E", program: "go", root: root, env: testEnv, secrets: secrets, args: []string{"test", "-tags", "composeintegration", "-race", "-run", "^TestFixtureE2E$", "-count=1", "-timeout=11m", "-v", "./test/integration/fixture"}})
 }
 
 // Buffer before redaction so credentials split across writes cannot leak.
@@ -272,4 +285,14 @@ func initialize(path string) error {
 		return errors.New("cannot close environment file")
 	}
 	return nil
+}
+
+// Retention is opt-in for existing runners; storage verification always retains evidence.
+func retainResources(parent []string) bool {
+	for _, entry := range parent {
+		if entry == "ETL_TEST_RETAIN=1" || entry == "ETL_STORAGE_VERIFY=1" {
+			return true
+		}
+	}
+	return false
 }

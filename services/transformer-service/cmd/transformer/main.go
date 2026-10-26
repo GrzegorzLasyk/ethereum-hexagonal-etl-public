@@ -11,10 +11,13 @@ import (
 	"time"
 
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/health"
-
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/metrics"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/logevent"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/adapters/inbound/dispatcher"
 	receiver "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/adapters/inbound/grpc"
+	servicemetrics "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/adapters/inbound/metrics"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/adapters/inbound/worker"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/adapters/logging"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/adapters/outbound/ethereumjson"
 	publisher "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/adapters/outbound/grpc"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/adapters/outbound/jsondocument"
@@ -27,21 +30,23 @@ import (
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil)).With("service", "transformer-service")
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	started := time.Now()
 	cfg, err := config.Load()
 	if err != nil {
-		logger.Error("invalid configuration", "error", err)
+		logevent.Write(ctx, logger, logevent.Event{Service: "transformer-service", Operation: "configure", Outcome: "failed", ErrorCode: "invalid_configuration"}, started)
 		os.Exit(1)
 	}
-	logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel})).With("service", "transformer-service")
+	logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	if err := run(ctx, cfg, logger); err != nil {
-		logger.Error("transformer stopped", "error", err)
+		logevent.Write(ctx, logger, logevent.Event{Service: "transformer-service", Operation: "run", Outcome: logevent.FailureOutcome(logging.ErrorCode(err)), ErrorCode: logging.ErrorCode(err)}, started)
 		os.Exit(1)
 	}
 }
 
 // run is the composition root: all workflow decisions live in use cases.
 func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
+	started := time.Now()
 	pc, err := pgxpool.ParseConfig(cfg.DatabaseURL)
 	if err != nil {
 		return errors.New("invalid database configuration")
@@ -61,6 +66,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil || role != "transformer_runtime" || db != "ethereum_etl" {
 		return errors.New("database requires transformer_runtime in ethereum_etl")
 	}
+	registry := metrics.New("process_inbox", "claim_inbox", "dispatch_outbox", "claim_outbox")
 	store, err := postgres.New(pool, cfg.ChainID, cfg.Lease, cfg.MaxAttempts)
 	if err != nil {
 		return err
@@ -77,7 +83,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	runner, err := worker.New(process, logger, cfg.Workers, cfg.PollInterval, cfg.ProcessTimeout)
+	runner, err := worker.New(process, logger, cfg.Workers, cfg.PollInterval, cfg.ProcessTimeout, registry)
 	if err != nil {
 		return err
 	}
@@ -94,11 +100,11 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	sender, err := dispatcher.New(dispatch, logger, cfg.Dispatch.Workers, cfg.Dispatch.PollInterval, cfg.Dispatch.Timeout)
+	sender, err := dispatcher.New(dispatch, logger, cfg.Dispatch.Workers, cfg.Dispatch.PollInterval, cfg.Dispatch.Timeout, registry)
 	if err != nil {
 		return err
 	}
-	server, err := receiver.NewServer(string(cfg.ChainID), cfg.Limits, accept)
+	server, err := receiver.NewServer(string(cfg.ChainID), cfg.Limits, accept, logger)
 	if err != nil {
 		return err
 	}
@@ -107,7 +113,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return errors.New("cannot open gRPC listener")
 	}
 	defer listener.Close()
-	closeHealth, err := health.Start(ctx, os.Getenv("TRANSFORMER_HEALTH_ADDRESS"), pool.Ping)
+	closeHealth, err := health.Start(ctx, os.Getenv("TRANSFORMER_HEALTH_ADDRESS"), store.CheckReadiness, servicemetrics.Handler(store, registry))
 	if err != nil {
 		return err
 	}
@@ -120,7 +126,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	go func() { sender.Run(working); close(dispatchDone) }()
 	serving := make(chan error, 1)
 	go func() { serving <- server.Serve(listener) }()
-	logger.Info("transformer started", "address", cfg.ListenAddress, "chain_id", cfg.ChainID, "workers", cfg.Workers)
+	logevent.Write(ctx, logger, logevent.Event{Service: "transformer-service", Operation: "run", ChainID: string(cfg.ChainID), Outcome: "started"}, started)
 	var serveErr error
 	select {
 	case <-ctx.Done():
@@ -139,7 +145,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	}
 	<-workerDone
 	<-dispatchDone
-	logger.Info("transformer stopped")
+	logevent.Write(ctx, logger, logevent.Event{Service: "transformer-service", Operation: "run", ChainID: string(cfg.ChainID), Outcome: "stopped"}, started)
 	if serveErr != nil {
 		return errors.New("gRPC serving failed")
 	}

@@ -62,6 +62,181 @@ go build -o bin/loader-service ./services/loader-service/cmd/loader
 
 Build outputs under `bin/` are ignored by Git. There is one root Go module and no nested service modules.
 
+## CI and architecture gates (Stage 12.1)
+
+[CI](.github/workflows/ci.yml) runs for pull requests and pushes to `main`, with
+two independent Ubuntu 24.04 jobs. Both use the Go version from `go.mod`;
+checkout/setup actions are pinned to commits. The workflow has only
+`contents: read`, does not retain checkout credentials and uses no repository
+secrets, Infura credentials, deployment or image publishing. Fixture images are
+built locally inside the integration runner. There are no path-based exclusions.
+
+**Quality** verifies gofmt without changing files, architectural boundaries,
+uncached unit/race tests, vet, and Buf formatting/lint/generated-code consistency.
+**Integration** requires a reachable Docker daemon and Compose v2, then runs the
+existing isolated Extractor, Transformer, Loader, Stage 9 handoff and Stage 11
+fixture runners, followed by Stage 12.5 backup/restore and storage measurements.
+Runners generate private credentials, apply/check migrations and permissions,
+and run tagged tests with race detection. Ordinary runs clean up their own
+resources; storage verification and `ETL_TEST_RETAIN=1` retain them. Missing infrastructure, runner/cleanup failure, a skipped test or a
+missing expected top-level PASS fails the gate. Later steps may be skipped after
+a failure, but the job cannot succeed. No `continue-on-error` is used.
+
+Run the same gates locally from the repository root (Bash, Go and Docker required):
+
+```sh
+# Must print no paths; include untracked Go files when checking local edits.
+git ls-files -z --cached --others --exclude-standard '*.go' | xargs -0 gofmt -l
+go test -count=1 -v ./test/architecture
+go test -count=1 ./...
+go test -race -count=1 ./...
+go vet ./...
+sh scripts/generate-proto.sh --check
+
+docker info > /dev/null
+docker compose version
+bash scripts/ci-integration.sh extractor-postgres
+bash scripts/ci-integration.sh transformer-postgres
+bash scripts/ci-integration.sh loader-postgres
+bash scripts/ci-integration.sh handoff-postgres
+bash scripts/ci-integration.sh fixture-e2e
+bash scripts/ci-integration.sh storage-release
+git diff --check
+```
+
+Ordinary `go test ./...` does not execute tagged database/E2E suites. Calling
+tagged tests without their runner configuration can skip them; the CI wrapper
+explicitly rejects that outcome. It also requires the Stage 9 seed test and the Stage 12.5 storage subtest to pass.
+Its negative tests simulate skipped/missing tests, unavailable Docker and failed
+cleanup without starting infrastructure. Runner logs are already redacted;
+temporary wrapper logs are removed on normal exit. Abrupt runner/host termination
+can still interrupt cleanup; hosted CI workers are disposable.
+
+`test/architecture` parses every production Go file in the three services,
+including build-tagged/platform-specific files, and their service-owned SQL
+migrations. Core imports permit only explicitly reviewed standard-library
+packages and inward dependencies within the same service. This rejects SQL,
+HTTP, gRPC, protobuf, broker clients, adapters/config and unreviewed helpers in
+domain/application; domain cannot import application. All production service
+layers reject imports from another service. Tests exercise forbidden and valid
+imports, quoted schema names, joins/writes, sequence/function references and
+constant SQL concatenation (including package constants across files).
+
+The schema check detects explicit foreign schema references in Go string
+expressions and migrations. It is not a SQL parser or a complete analysis of
+runtime-built SQL, aliases or `search_path`. Test harnesses and administrator
+bootstrap scripts are intentionally outside the service ownership scan. Actual
+PostgreSQL permission tests provide the complementary enforcement boundary;
+static checks do not replace database privileges or code review.
+
+To make CI mandatory for merging, a repository administrator must configure
+the `Quality` and `Integration` checks in branch protection/rulesets after the
+workflow has run. Adding this file does not change repository settings or prove
+a hosted run passed. Fork PR execution may require approval under repository
+policy. Cold runs require access to Go modules, pinned tools and container
+registries. Stage 12.1 introduces no deployment or publishing. Stage 12.2 logging
+is described below; Stage 12.3 adds local metrics and Stage 12.4 adds local schema
+readiness. Stage 12.5 adds storage verification and the local MVP release checklist.
+
+## Structured logging and correlation (Stage 12.2)
+
+All three executables emit JSON `slog` records to stderr, controlled by their
+existing log-level configuration (default `INFO`). See the
+[logging contract and troubleshooting guide](docs/architecture/logging-stage12.md)
+for field meanings, safe failure codes and examples.
+
+Every record has `service`, `operation`, `event_id`, `source_event_id`, `chain_id`,
+`block_number`, `block_hash`, `attempt`, `outcome`, `error_code`, and `duration_ms`.
+Unavailable metadata is `null`; no new event IDs or protobuf fields are introduced.
+Raw IDs correlate Extractor delivery with Transformer processing; the existing
+`source_event_id` links transformed delivery and Loader processing back to the raw
+observation. `accepted` means a durable Inbox ACK, while `completed` means the
+local processing transaction succeeded. `unknown` / `commit_unknown` requires
+checking durable state or retrying the same identity, not assuming rollback.
+
+```sh
+docker compose --env-file .env.fixture -p ethereum-fixture -f deployments/compose/compose.yaml -f deployments/compose/fixture.yaml --profile fixture logs --no-color --no-log-prefix extractor transformer loader
+bash scripts/ci-integration.sh fixture-e2e
+```
+
+The fixture E2E verifies actual JSON logs across both hops, retries, duplicate
+acceptance after ACK loss, replay and reorg. Unit tests cover ambiguous commits,
+failed operations, cancellation after success and redaction. Logs exclude payloads,
+receipts, provider labels, DSNs, endpoints and underlying error messages. They are
+operational evidence, not durable audit storage. No metrics or readiness changes
+are part of Stage 12.2.
+
+## Prometheus metrics (Stage 12.3)
+
+Each service exposes local `GET /metrics` on its existing `*_HEALTH_ADDRESS`
+listener. The fixture uses ports 8091 (Extractor), 8092 (Transformer), and 8093
+(Loader), accessible inside the fixture network namespace. `/live` and `/ready`
+retain their existing semantics. No Prometheus/Grafana stack is deployed.
+
+Using `dc_fixture` from the [local runbook](docs/architecture/local-stage11.md):
+
+```sh
+dc_fixture exec -T fixture /app/probe --body http://127.0.0.1:8091/metrics
+dc_fixture exec -T fixture /app/probe --body http://127.0.0.1:8092/metrics
+dc_fixture exec -T fixture /app/probe --body http://127.0.0.1:8093/metrics
+bash scripts/ci-integration.sh fixture-e2e
+```
+
+Inspect `etl_database_snapshot_success` before trusting queue/checkpoint gauges.
+A database failure leaves HTTP 200 for process telemetry, sets snapshot success
+to 0 and **omits database-derived gauges**, rather than presenting healthy zeros.
+Counters reset with the process; queue/checkpoint gauges come from durable state.
+See the [metric reference](docs/architecture/metrics-stage12.md) for units, fixed
+labels, head freshness, backlog/age definitions, restart semantics and limitations.
+
+## Storage and release readiness (Stage 12.5)
+
+The [operations index](docs/architecture/operations-stage12.md) consolidates
+startup, upgrades, incident diagnosis, failed Inbox/Outbox recovery, retention and
+archiving. History and deduplication records remain retained indefinitely; no
+automatic deletion or archival eviction is implemented.
+
+```sh
+# Full fixture E2E, fresh-cluster backup/restore and measured critical SQL:
+bash scripts/ci-integration.sh storage-release
+# Preserve isolated regression resources instead of deleting their volumes:
+ETL_TEST_RETAIN=1 bash scripts/ci-integration.sh extractor-postgres
+```
+
+Storage verification retains both isolated PostgreSQL volumes, a private archive,
+checksums, EXPLAIN JSON plans and configuration, printing their locations. It refuses
+a populated restore target. It never targets the developer's persistent database.
+The measurement clone contains synthetic SQL-shape data; do not start ETL against it.
+See [backup/restore](docs/architecture/backup-restore-stage12.md),
+[actual measurements](docs/architecture/storage-measurements-stage12.md), and the
+[MVP release checklist/security limits](docs/architecture/release-stage12.md).
+See the [exact validation results](docs/architecture/validation-stage12.md).
+This is a trusted-local MVP, not approval for production deployment.
+
+## Schema readiness (Stage 12.4)
+
+`/ready` now checks the owning PostgreSQL database, required tables/columns/types,
+indexes, exact migration versions/checksums and effective runtime privileges.
+It returns an empty 503 on failure, timeout or shutdown; it never exposes SQL,
+credentials or database diagnostics. `/live` and `/metrics` remain independent.
+Health listeners still accept only literal loopback IP addresses.
+
+Existing databases must apply the new service-owned migrations before this binary
+can become ready: Extractor `0005_readiness_metadata.sql`, Transformer and Loader
+`0004_readiness_metadata.sql`. They add only a read-only version/checksum view;
+no event or business storage changes. In the persistent fixture environment:
+
+```sh
+dc_fixture run --rm migrate-extractor
+dc_fixture run --rm migrate-transformer
+dc_fixture run --rm migrate-loader
+dc_fixture up --build -d --wait --wait-timeout 120
+```
+
+See [readiness checks, upgrades and limitations](docs/architecture/readiness-stage12.md).
+Readiness does not call downstream services or the Ethereum provider, migrate or
+repair the database, pause workers, or declare the ETL caught up.
+
 ## Run and stop
 
 Run each command in a separate terminal:
@@ -538,7 +713,7 @@ The healthcheck authenticates over TCP and executes `SELECT 1` against `ethereum
 
 The first-volume bootstrap runs as the PostgreSQL administrator to create the six logins and assign schema ownership. Service migrations subsequently authenticate as the corresponding migrator, never as the administrator. Each migration container receives only its own migration password. Never use migration/admin credentials in an application service.
 
-All six service logins have no superuser, role/database creation, replication, bypass-RLS, inherited membership, or membership in other service roles. Database-level PUBLIC privileges and PUBLIC access to the `public` schema are revoked. Service roles receive CONNECT, but no database CREATE or TEMP privileges. The migrator owns only its service schema. Runtime receives USAGE on its own schema and no CREATE, ownership, or access to migration metadata. Neither role can access another service's schema or assume its roles. PostgreSQL system catalog visibility is not a promise of metadata secrecy; the isolation boundary protects service objects and data.
+All six service logins have no superuser, role/database creation, replication, bypass-RLS, inherited membership, or membership in other service roles. Database-level PUBLIC privileges and PUBLIC access to the `public` schema are revoked. Service roles receive CONNECT, but no database CREATE or TEMP privileges. The migrator owns only its service schema. Runtime receives USAGE on its own schema and no CREATE or ownership. Stage 12.4 grants read-only access to version/checksum through an owning-schema `schema_readiness` view; the migration table remains private. Neither role can access another service's schema or assume its roles. PostgreSQL system catalog visibility is not a promise of metadata secrecy; the isolation boundary protects service objects and data.
 
 There are no blanket runtime table grants. Stages 5, 7 and 8 grant only the documented operations on service-owned tables; future service-owned migrations must likewise grant operations explicitly. New functions and types do not receive PUBLIC access by default. The global default revokes are intentional: schema-local revokes cannot remove privileges granted globally. See the [PostgreSQL default-privilege documentation](https://www.postgresql.org/docs/17/sql-alterdefaultprivileges.html).
 

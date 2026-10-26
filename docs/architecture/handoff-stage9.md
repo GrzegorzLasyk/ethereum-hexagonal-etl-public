@@ -1,5 +1,10 @@
 # Outbox dispatch and reliable gRPC handoff (Stage 9)
 
+Current operations, storage preservation, failed-work limitations and release
+checks are consolidated in the [Stage 12.5 runbook](operations-stage12.md).
+Earlier exclusions below describe the original stage's scope, not missing current
+health, metrics, dispatch or local deployment.
+
 Stage 9 connects committed Extractor Outbox events to Transformer, and committed
 Transformer Outbox events to Loader. It implements ADR 0001's at-least-once
 handoff using the unchanged Stage 6 protobuf and Stage 7 transformed JSON v1.

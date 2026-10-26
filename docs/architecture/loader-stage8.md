@@ -1,5 +1,10 @@
 # Loader Inbox and normalized persistence (Stage 8)
 
+Current operations, storage preservation, failed-work limitations and release
+checks are consolidated in the [Stage 12.5 runbook](operations-stage12.md).
+Earlier exclusions below describe the original stage's scope, not missing current
+health, metrics, dispatch or local deployment.
+
 This document records its stage's persistence boundary. [Stage 9](handoff-stage9.md)
 now adds Outbox transmission and executable dispatch wiring; earlier statements
 about deferred dispatch describe the original stage scope.
@@ -174,7 +179,7 @@ service convention. Pool capacity is workers + 4; connect timeout is 5 s and
 SQL statement timeout 10 s. SIGINT/SIGTERM cancel and join workers, drain RPCs
 within the grace period and close the pool. Accepted interrupted work remains
 durable. Progress logs include safe event identity/attempt/outcome, not payloads
-or driver messages. There is no health API or production transport authentication.
+or driver messages. Stages 11–12.4 add local health/metrics; production transport authentication remains absent.
 
 ## Verification
 

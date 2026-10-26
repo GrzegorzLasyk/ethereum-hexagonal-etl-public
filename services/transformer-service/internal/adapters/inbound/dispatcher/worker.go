@@ -7,21 +7,29 @@ import (
 	"sync"
 	"time"
 
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/metrics"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/logevent"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/adapters/logging"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/application/ports/inbound"
 )
 
 type Worker struct {
+	metrics       *metrics.Registry
 	processor     inbound.Dispatcher
 	logger        *slog.Logger
 	concurrency   int
 	poll, timeout time.Duration
 }
 
-func New(p inbound.Dispatcher, logger *slog.Logger, concurrency int, poll, timeout time.Duration) (*Worker, error) {
+func New(p inbound.Dispatcher, logger *slog.Logger, concurrency int, poll, timeout time.Duration, registries ...*metrics.Registry) (*Worker, error) {
 	if p == nil || logger == nil || concurrency < 1 || concurrency > 8 || poll <= 0 || timeout <= 0 {
 		return nil, fmt.Errorf("invalid worker configuration")
 	}
-	return &Worker{p, logger, concurrency, poll, timeout}, nil
+	var registry *metrics.Registry
+	if len(registries) > 0 {
+		registry = registries[0]
+	}
+	return &Worker{registry, p, logger, concurrency, poll, timeout}, nil
 }
 
 // Run owns bounded polling goroutines and waits for all delivery calls to
@@ -31,16 +39,25 @@ func (w *Worker) Run(ctx context.Context) {
 	for range w.concurrency {
 		group.Go(func() {
 			for ctx.Err() == nil {
+				started := time.Now()
 				call, cancel := context.WithTimeout(ctx, w.timeout)
 				result, err := w.processor.DispatchOne(call)
 				cancel()
+				if err != nil || result.Found {
+					code, outcome := result.ErrorCode, result.Outcome
+					if err != nil {
+						code = logging.ErrorCode(err)
+						outcome = logevent.FailureOutcome(code)
+					}
+					operation := "dispatch_outbox"
+					if !result.Found {
+						operation = "claim_outbox"
+					}
+					w.metrics.Observe(operation, outcome, time.Since(started))
+					logevent.Write(ctx, w.logger, logevent.Event{Service: "transformer-service", Operation: "dispatch_outbox", EventID: result.EventID, SourceEventID: result.SourceEventID, Attempt: result.Attempt, Outcome: outcome, ErrorCode: code}, started)
+				}
 				if ctx.Err() != nil {
 					return
-				}
-				if err != nil {
-					w.logger.Error("outbox delivery attempt interrupted")
-				} else if result.Found {
-					w.logger.Info("outbox progress", "event_id", result.EventID, "attempt", result.Attempt, "outcome", result.Outcome)
 				}
 				if err == nil && result.Found {
 					continue

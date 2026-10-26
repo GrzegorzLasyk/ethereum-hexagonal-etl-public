@@ -121,6 +121,10 @@ func run(ctx context.Context, root string, parent []string, port int, invoke fun
 		return errors.New("cannot create private test configuration")
 	}
 	defer func() {
+		if retainResources(parent) {
+			fmt.Fprintf(os.Stdout, "Retained project %s; private configuration: %s\n", project, file.Name())
+			return
+		}
 		if err := os.Remove(file.Name()); err != nil {
 			result = errors.Join(result, errors.New("cannot remove temporary credential file"))
 		}
@@ -145,7 +149,11 @@ func run(ctx context.Context, root string, parent []string, port int, invoke fun
 		// newly generated project and its volume are eligible for deletion.
 		cleanup, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
-		if err := invoke(cleanup, docker("cleanup", "down", "--volumes", "--remove-orphans")); err != nil {
+		args := []string{"down", "--volumes", "--remove-orphans"}
+		if retainResources(parent) {
+			args = []string{"stop", "-t", "30"}
+		}
+		if err := invoke(cleanup, docker("cleanup", args...)); err != nil {
 			result = errors.Join(result, fmt.Errorf("cleanup failed for project %s: %w", project, err))
 		}
 	}()
@@ -236,4 +244,14 @@ func execute(ctx context.Context, c command) error {
 	}
 	// Do not print exec errors, command arguments, environments or DSNs.
 	return errors.New(c.phase + ": could not execute command")
+}
+
+// Retention is opt-in for existing runners; storage verification always retains evidence.
+func retainResources(parent []string) bool {
+	for _, entry := range parent {
+		if entry == "ETL_TEST_RETAIN=1" || entry == "ETL_STORAGE_VERIFY=1" {
+			return true
+		}
+	}
+	return false
 }

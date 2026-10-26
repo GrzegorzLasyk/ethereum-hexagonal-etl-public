@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -177,14 +178,34 @@ func TestFixtureE2E(t *testing.T) {
 	s.until("Extractor retains two events while Transformer is offline", func() bool {
 		return s.is(s.ex, "SELECT count(*) FROM extractor.raw_blocks", 2) && s.is(s.ex, "SELECT count(*) FROM extractor.outbox_events WHERE attempts>0 AND last_error_code='unavailable'", 2)
 	})
+	if !s.probe(8091, "ready") {
+		t.Fatal("Extractor readiness depends on downstream availability")
+	}
 	s.require(s.ex, "SELECT block_number::int FROM extractor.extraction_checkpoints", 101)
+	m := s.metrics(8091)
+	if m[`etl_queue_backlog{queue="outbox"}`] != 2 || m["etl_extractor_checkpoint"] != 101 || m["etl_extractor_lag_blocks"] != 1 {
+		t.Fatal("extractor backlog/head metrics", m)
+	}
 	s.require(s.ex, "SELECT count(*) FROM extractor.raw_blocks WHERE block_number=102", 0)
 	s.compose("start", "transformer")
 	s.until("Transformer retains output while Loader is offline", func() bool {
 		return s.is(s.tr, "SELECT count(*) FROM transformer.inbox_events WHERE status='completed'", 2) && s.is(s.tr, "SELECT count(*) FROM transformer.outbox_events WHERE attempts>0 AND last_error_code='unavailable'", 2)
 	})
+	if !s.probe(8092, "ready") {
+		t.Fatal("Transformer readiness depends on Loader availability")
+	}
+	transforming := s.metrics(8092)
+	if transforming[`etl_queue_backlog{queue="outbox"}`] != 2 || transforming[`etl_queue_events{queue="inbox",state="done"}`] != 2 {
+		t.Fatal("transformer queue metrics", transforming)
+	}
 	s.compose("start", "loader")
 	s.until("durable handoff resumes after both outages", func() bool { return s.drained(2) })
+	for _, port := range []int{8091, 8092} {
+		m := s.metrics(port)
+		if m[`etl_operation_retries_total{operation="dispatch_outbox"}`] < 1 {
+			t.Fatal("missing retry metric", port)
+		}
+	}
 	state := s.state()
 	if state.RawLost != 1 || state.TransformedLost != 1 || state.RawDuplicates < 1 || state.TransformedDuplicates < 1 || state.Changed {
 		t.Fatalf("lost ACK/deduplication evidence: %+v", state)
@@ -198,6 +219,17 @@ func TestFixtureE2E(t *testing.T) {
 			t.Fatal("service exited during database outage")
 		}
 	}
+	for _, port := range []int{8091, 8092, 8093} {
+		m := s.metrics(port)
+		if m["etl_database_snapshot_success"] != 0 {
+			t.Fatal("DB outage reported success", port)
+		}
+		for name := range m {
+			if strings.HasPrefix(name, "etl_queue_") || name == "etl_extractor_checkpoint" || name == "etl_extractor_revision" || name == "etl_extractor_lag_blocks" {
+				t.Fatal("DB outage returned stale or zero gauge", name)
+			}
+		}
+	}
 	s.control(`{"head":104}`)
 	s.compose("start", "postgres")
 	s.until("database recovery and follow-head continuation", func() bool {
@@ -205,6 +237,7 @@ func TestFixtureE2E(t *testing.T) {
 	})
 	s.require(s.ex, "SELECT block_number::int FROM extractor.extraction_checkpoints", 103)
 	before := s.history()
+	priorStart := s.metrics(8093)["etl_process_start_time_seconds"]
 	s.stop("extractor", "transformer", "loader")
 	s.compose("start", "extractor", "transformer", "loader")
 	s.until("service restart preserves durable cursor and data", func() bool {
@@ -213,9 +246,16 @@ func TestFixtureE2E(t *testing.T) {
 	if !reflect.DeepEqual(before, s.history()) {
 		t.Fatal("service restart changed original history")
 	}
+	restarted := s.metrics(8093)
+	if restarted["etl_process_start_time_seconds"] <= priorStart || restarted[`etl_queue_events{queue="inbox",state="done"}`] != 4 || restarted[`etl_operations_total{operation="process_inbox",outcome="completed"}`] != 0 {
+		t.Fatal("restart metrics do not separate process and durable state", restarted)
+	}
 	// Use the real Stage 10 operator command; an accepted Inbox still deduplicates.
 	event := "raw-block/v1/1/100/" + strings.TrimPrefix(fixture.Hash(100, false), "0x")
-	s.compose("run", "--rm", "--no-deps", "-e", "EXTRACTOR_MODE=replay", "-e", "EXTRACTOR_OPERATION_ID=stage11-replay", "-e", "EXTRACTOR_REPLAY_EVENT_ID="+event, "extractor")
+	replayLog := s.compose("run", "--rm", "--no-deps", "-e", "EXTRACTOR_MODE=replay", "-e", "EXTRACTOR_OPERATION_ID=stage11-replay", "-e", "EXTRACTOR_REPLAY_EVENT_ID="+event, "extractor")
+	if !bytes.Contains(replayLog, []byte(`"operation":"replay_outbox"`)) || !bytes.Contains(replayLog, []byte(`"event_id":"`+event+`"`)) || !bytes.Contains(replayLog, []byte(`"outcome":"requeued"`)) {
+		t.Fatal("replay correlation missing")
+	}
 	s.until("operator replay delivers without duplicate materialization", func() bool { return s.drained(4) && s.state().RawDuplicates > state.RawDuplicates })
 	s.require(s.ex, "SELECT count(*) FROM extractor.replays", 1)
 	if !reflect.DeepEqual(before, s.history()) {
@@ -235,8 +275,39 @@ func TestFixtureE2E(t *testing.T) {
 		}
 	}
 	s.verifyRecords()
+	for _, port := range []int{8091, 8092, 8093} {
+		m := s.metrics(port)
+		if m["etl_database_snapshot_success"] != 1 {
+			t.Fatal("metrics failed after recovery", port)
+		}
+		for _, q := range []string{"inbox", "outbox"} {
+			if _, ok := m[`etl_queue_backlog{queue="`+q+`"}`]; ok && m[`etl_queue_events{queue="`+q+`",state="done"}`] != 7 {
+				t.Fatal("wrong durable completed metric", port, q)
+			}
+			if backlog, ok := m[`etl_queue_backlog{queue="`+q+`"}`]; ok && backlog != 0 {
+				t.Fatal("nonempty final metrics backlog", port, q)
+			}
+		}
+	}
+	final := s.metrics(8091)
+	if final["etl_extractor_checkpoint"] != 104 || final["etl_extractor_revision"] != 1 || final["etl_extractor_head"] != 105 || final["etl_extractor_lag_blocks"] != 1 {
+		t.Fatal("reorg metrics", final)
+	}
+	loaded := s.metrics(8093)
+	if loaded[`etl_queue_events{queue="inbox",state="done"}`] != 7 || loaded[`etl_operation_duration_seconds_count{operation="persist_block"}`] < 3 {
+		t.Fatal("missing loader persistence metrics", loaded)
+	}
+	t.Log("PASS: metrics backlog, retry, outage without healthy zeros, restart semantics, persistence and reorg")
 	s.stop("extractor", "transformer", "loader")
+	s.verifyCorrelation(after)
 	t.Log("PASS: full Compose fixture E2E, preservation, normalized data, graceful shutdown")
+	if os.Getenv("ETL_STORAGE_VERIFY") == "1" {
+		t.Run("storage_release", func(t *testing.T) {
+			copy := *s
+			copy.t = t
+			copy.verifyStorageRelease()
+		})
+	}
 }
 
 // Include original source bytes, receipt bytes, provenance and stable event ID.
@@ -345,4 +416,90 @@ func (s *system) verifyRecords() {
 			s.t.Fatal("cross-service access allowed")
 		}
 	}
+}
+
+// Inspect actual service stdout/stderr after graceful shutdown, not synthetic logs.
+func (s *system) verifyCorrelation(history map[string][32]byte) {
+	s.t.Helper()
+	logs := s.compose("logs", "--no-color", "--no-log-prefix", "extractor", "transformer", "loader")
+	seen := map[string]bool{}
+	for _, line := range bytes.Split(logs, []byte("\n")) {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var r map[string]any
+		if err := json.Unmarshal(line, &r); err != nil {
+			s.t.Fatal("service log is not structured JSON")
+		}
+		for _, key := range []string{"service", "operation", "event_id", "source_event_id", "chain_id", "block_number", "block_hash", "attempt", "outcome", "error_code", "duration_ms"} {
+			if _, ok := r[key]; !ok {
+				s.t.Fatal("missing log field", key)
+			}
+		}
+		if _, ok := r["error"]; ok {
+			s.t.Fatal("raw error field in service log")
+		}
+		id, _ := r["event_id"].(string)
+		if strings.HasPrefix(id, "transformed-block/") && r["source_event_id"] != strings.Replace(id, "transformed-block/", "raw-block/", 1) {
+			s.t.Fatal("transformed source correlation missing")
+		}
+		if id != "" && (r["chain_id"] != "1" || r["block_hash"] == nil || r["block_number"] == nil) {
+			s.t.Fatal("block correlation missing")
+		}
+		key := fmt.Sprint(r["service"], "/", r["operation"], "/", r["outcome"], "/", id)
+		seen[key] = true
+	}
+	for raw := range history {
+		transformed := strings.Replace(raw, "raw-block/", "transformed-block/", 1)
+		for _, key := range []string{"extractor-service/index_block/completed/" + raw, "extractor-service/dispatch_outbox/delivered/" + raw, "transformer-service/process_inbox/completed/" + raw, "transformer-service/dispatch_outbox/delivered/" + transformed, "loader-service/process_inbox/completed/" + transformed} {
+			if !seen[key] {
+				s.t.Fatal("missing end-to-end correlated log", key)
+			}
+		}
+	}
+	for _, prefix := range []string{"extractor-service/dispatch_outbox/retry/", "transformer-service/dispatch_outbox/retry/", "transformer-service/accept_inbox/already_accepted/", "loader-service/accept_inbox/already_accepted/", "extractor-service/reorg_recovery/rewound/", "extractor-service/rewind_checkpoint/rewound/"} {
+		found := false
+		for key := range seen {
+			if strings.HasPrefix(key, prefix) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			s.t.Fatal("missing fault/recovery log", prefix)
+		}
+	}
+	s.t.Log("PASS: structured correlation across both hops, retries, duplicate ACK, replay and reorg")
+}
+
+func (s *system) metrics(port int) map[string]float64 {
+	s.t.Helper()
+	body := s.compose("exec", "-T", "fixture", "/app/probe", "--body", fmt.Sprintf("http://127.0.0.1:%d/metrics", port))
+	result := map[string]float64{}
+	for _, line := range strings.Split(string(body), "\n") {
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			s.t.Fatal("invalid metric exposition")
+		}
+		value, err := strconv.ParseFloat(fields[1], 64)
+		if err != nil {
+			s.t.Fatal("invalid sample value")
+		}
+		if _, exists := result[fields[0]]; exists {
+			s.t.Fatal("duplicate metric series")
+		}
+		result[fields[0]] = value
+		for _, forbidden := range []string{"event_id=", "block_hash=", "block_number=", "error=", "chain_id=", "provider="} {
+			if strings.Contains(fields[0], forbidden) {
+				s.t.Fatal("unbounded metric label")
+			}
+		}
+	}
+	if _, ok := result["etl_database_snapshot_success"]; !ok {
+		s.t.Fatal("missing snapshot status")
+	}
+	return result
 }

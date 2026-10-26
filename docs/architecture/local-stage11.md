@@ -1,5 +1,10 @@
 # Local complete ETL with deterministic fixtures (Stage 11)
 
+Current operations, storage preservation, failed-work limitations and release
+checks are consolidated in the [Stage 12.5 runbook](operations-stage12.md).
+Earlier exclusions below describe the original stage's scope, not missing current
+health, metrics, dispatch or local deployment.
+
 Stage 11 runs PostgreSQL, the real Extractor/Transformer/Loader binaries and a
 synthetic Ethereum JSON-RPC server in Docker Compose. It reuses the existing
 PostgreSQL Compose definition, migrator scripts, service-owned schemas and
@@ -127,8 +132,10 @@ health listeners. Unset means disabled, retaining the earlier executable behavio
 The overlay sets ports 8091, 8092 and 8093 respectively:
 
 - `/live`: process lifecycle has not been canceled.
-- `/ready`: startup wiring succeeded and the owning database answers a bounded
-  ping; becomes unavailable during a database outage or shutdown.
+- `/ready`: startup wiring succeeded and the owning database passes bounded
+  connectivity, service schema, migration and runtime privilege checks (Stage 12.4);
+  returns 503 during outages, schema incompatibility, privilege drift or shutdown.
+  See the [readiness upgrade guide](readiness-stage12.md).
 
 Readiness is not evidence of a drained queue, valid source head, downstream
 availability or completed ETL. Observe persistent progress separately. Docker

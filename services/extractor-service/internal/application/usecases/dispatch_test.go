@@ -64,6 +64,9 @@ func TestDispatchAcknowledgementBoundary(t *testing.T) {
 				t.Fatal(e)
 			}
 			result, e := u.DispatchOne(t.Context())
+			if result.EventID != "stable" || result.Attempt != 2 || result.ErrorCode != tc.code {
+				t.Fatalf("lost correlation: %+v", result)
+			}
 			if !errors.Is(e, tc.commit) || result.Outcome != tc.outcome || f.published != tc.published || f.retried != tc.retried || f.failure.Code != tc.code || f.failure.Permanent != tc.permanent {
 				t.Fatalf("result=%+v err=%v queue=%+v", result, e, f)
 			}

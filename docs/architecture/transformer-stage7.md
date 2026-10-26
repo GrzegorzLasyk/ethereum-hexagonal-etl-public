@@ -1,5 +1,10 @@
 # Transformer Inbox, transformation and Outbox (Stage 7)
 
+Current operations, storage preservation, failed-work limitations and release
+checks are consolidated in the [Stage 12.5 runbook](operations-stage12.md).
+Earlier exclusions below describe the original stage's scope, not missing current
+health, metrics, dispatch or local deployment.
+
 This document records its stage's persistence boundary. [Stage 9](handoff-stage9.md)
 now adds Outbox transmission and executable dispatch wiring; earlier statements
 about deferred dispatch describe the original stage scope.
@@ -76,7 +81,7 @@ The `Complete` transaction updates Inbox completion, inserts one immutable
 `transformed_blocks` JSON document and one `outbox_events` intent together.
 Any failure rolls all three back. The Outbox references a result in the same
 schema; it does not duplicate its payload or read another service's tables.
-All Outbox rows remain pending; there is no delivery status or dispatcher.
+Stage 9 adds delivery states and the durable Outbox dispatcher.
 
 Permanent validation/unsupported/identity/incomplete/oversize errors fail
 immediately. Other errors retry with bounded exponential backoff and equal
@@ -86,7 +91,7 @@ second state update; subsequent recovery observes completion or reclaims work.
 No exactly-once transport claim or cross-service transaction is made.
 
 The runtime role receives only SELECT/INSERT on owned tables and UPDATE on
-Inbox processing columns. It cannot alter accepted bytes, delete events, change
+Inbox processing and Outbox delivery columns. It cannot alter accepted bytes, delete events, change
 results or access other service schemas. Apply the new migration as
 `transformer_migrator`, never automatically from the service.
 
@@ -138,7 +143,7 @@ Ethereum provider was used. PostgreSQL runners removed their disposable resource
 No commit, branch creation or push was performed.
 
 No unresolved architectural decision blocks Stage 7. Outgoing dispatch (Stage 9),
-Loader persistence (Stage 8), finality/reorg reconciliation (Stage 10), retention,
+Loader persistence (Stage 8), provider-relative Extractor recovery (Stage 10; no finality/canonical reconciliation), retention,
 failed-event replay tooling and production transport/deployment remain outside
 this stage. Commit-loss tests inject errors around a real database COMMIT; they
 do not simulate host power loss. Payload byte limits are not process-memory limits.

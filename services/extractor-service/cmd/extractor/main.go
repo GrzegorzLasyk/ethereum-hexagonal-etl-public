@@ -11,9 +11,12 @@ import (
 	"time"
 
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/health"
-
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/metrics"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/logevent"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/adapters/inbound/dispatcher"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/adapters/inbound/indexer"
+	servicemetrics "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/adapters/inbound/metrics"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/adapters/logging"
 	publisher "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/adapters/outbound/grpc"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/adapters/outbound/jsonrpc"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/adapters/outbound/postgres"
@@ -26,19 +29,32 @@ import (
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil)).With("service", "extractor-service")
+	logger := slog.New(slog.NewJSONHandler(os.Stderr, nil))
+	started := time.Now()
 	cfg, err := config.Load()
 	if err != nil {
-		logger.Error("invalid configuration", "error", err)
+		logevent.Write(ctx, logger, logevent.Event{Service: "extractor-service", Operation: "configure", Outcome: "failed", ErrorCode: "invalid_configuration"}, started)
 		os.Exit(1)
 	}
-	logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel})).With("service", "extractor-service")
+	logger = slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: cfg.LogLevel}))
 	if err = run(ctx, cfg, logger); err != nil {
-		logger.Error("extractor stopped", "error", err)
+		logevent.Write(ctx, logger, logevent.Event{Service: "extractor-service", Operation: "run", Outcome: logevent.FailureOutcome(logging.ErrorCode(err)), ErrorCode: logging.ErrorCode(err)}, started)
 		os.Exit(1)
 	}
 }
-func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
+func run(ctx context.Context, cfg config.Config, logger *slog.Logger) (returnedErr error) {
+	started := time.Now()
+	// Replay names an event before any database I/O. Keep that identity even if
+	// connection/configuration setup fails before the application call.
+	if cfg.Indexing.Mode == "replay" {
+		defer func() {
+			code, outcome := logging.ErrorCode(returnedErr), "requeued"
+			if returnedErr != nil {
+				outcome = logevent.FailureOutcome(code)
+			}
+			logevent.Write(ctx, logger, logevent.Event{Service: "extractor-service", Operation: "replay_outbox", EventID: cfg.Indexing.Replay.EventID, ErrorCode: code, Outcome: outcome}, started)
+		}()
+	}
 	pc, err := pgxpool.ParseConfig(cfg.DatabaseURL)
 	if err != nil {
 		return errors.New("invalid database configuration")
@@ -58,6 +74,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil || role != "extractor_runtime" || db != "ethereum_etl" {
 		return errors.New("database requires extractor_runtime in ethereum_etl")
 	}
+	registry := metrics.New("index_cycle", "reindex_cycle", "index_block", "reindex_block", "dispatch_outbox", "claim_outbox")
 	store, err := postgres.New(pool, cfg.ChainID, cfg.Indexing.Options.Start)
 	if err != nil {
 		return err
@@ -65,7 +82,8 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if cfg.Indexing.Mode == "replay" {
 		return usecases.Replay(ctx, store, cfg.Indexing.Replay)
 	}
-	closeHealth, err := health.Start(ctx, os.Getenv("EXTRACTOR_HEALTH_ADDRESS"), pool.Ping)
+
+	closeHealth, err := health.Start(ctx, os.Getenv("EXTRACTOR_HEALTH_ADDRESS"), store.CheckReadiness, servicemetrics.Handler(store, registry))
 	if err != nil {
 		return err
 	}
@@ -85,7 +103,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		if err != nil {
 			return err
 		}
-		acquisition, err = indexer.New(scheduler, logger, cfg.Indexing.Poll, cfg.Indexing.Timeout, cfg.Indexing.MaxErrors)
+		acquisition, err = indexer.New(scheduler, logger, cfg.Indexing.Poll, cfg.Indexing.Timeout, cfg.Indexing.MaxErrors, registry)
 		if err != nil {
 			return err
 		}
@@ -103,11 +121,11 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	runner, err := dispatcher.New(dispatch, logger, cfg.Dispatch.Workers, cfg.Dispatch.PollInterval, cfg.Dispatch.Timeout)
+	runner, err := dispatcher.New(dispatch, logger, cfg.Dispatch.Workers, cfg.Dispatch.PollInterval, cfg.Dispatch.Timeout, registry)
 	if err != nil {
 		return err
 	}
-	logger.Info("extractor dispatcher started", "chain_id", cfg.ChainID, "workers", cfg.Dispatch.Workers)
+	logevent.Write(ctx, logger, logevent.Event{Service: "extractor-service", Operation: "run", ChainID: string(cfg.ChainID), Outcome: "started"}, started)
 	if acquisition == nil {
 		runner.Run(ctx)
 	} else {
@@ -118,6 +136,6 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		cancel()
 		group.Wait()
 	}
-	logger.Info("extractor dispatcher stopped")
+	logevent.Write(ctx, logger, logevent.Event{Service: "extractor-service", Operation: "run", ChainID: string(cfg.ChainID), Outcome: "stopped"}, started)
 	return err
 }

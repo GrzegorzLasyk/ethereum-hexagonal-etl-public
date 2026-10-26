@@ -110,6 +110,8 @@ func (tx faultTx) Commit(ctx context.Context) error {
 func TestPostgresIntegration(t *testing.T) {
 	runtime := integrationPool(t, "TRANSFORMER_TEST_DATABASE_URL", "transformer_runtime")
 	owner := integrationPool(t, "TRANSFORMER_TEST_MIGRATOR_URL", "transformer_migrator")
+	t.Run("operational metrics", func(t *testing.T) { testMetrics(t, runtime, owner) })
+	t.Run("schema readiness", func(t *testing.T) { testReadiness(t, runtime, owner) })
 	t.Run("outbox delivery", func(t *testing.T) { testOutbox(t, runtime, owner) })
 	ctx := t.Context()
 	exec := func(sql string, args ...any) {

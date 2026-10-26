@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/application/ports/inbound"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/application/ports/outbound"
@@ -29,13 +30,19 @@ func NewReindex(o IndexOptions, id string, source outbound.BlockSource, observer
 	}
 	return &Reindex{o, outbound.ReindexRequest{ID: id, Start: o.Start, End: *o.End}, source, observer, store}, nil
 }
-func (u *Reindex) Cycle(ctx context.Context) (inbound.IndexResult, error) {
-	var result inbound.IndexResult
+func (u *Reindex) Cycle(ctx context.Context) (result inbound.IndexResult, err error) {
+	result.ChainID = string(u.options.Chain)
+	result.Reindex = true
+	started := time.Now()
+	defer func() { result.Duration = time.Since(started) }()
 	for result.Processed < u.options.Batch {
+		started = time.Now()
+		result.Block, result.Next = nil, nil
 		state, err := u.store.OpenReindex(ctx, u.request)
 		if err != nil {
 			return result, err
 		}
+		result.Block = state.Last
 		head, err := u.observer.Head(ctx)
 		if err != nil {
 			return result, err
@@ -43,6 +50,9 @@ func (u *Reindex) Cycle(ctx context.Context) (inbound.IndexResult, error) {
 		if err := validHeader(head, u.options.Chain, head.ID.Number); err != nil {
 			return result, err
 		}
+		height := head.ID.Number
+		result.Head = &height
+		result.HeadObservedAt = time.Now()
 		if state.Last != nil {
 			last, err := u.observer.Header(ctx, state.Last.Number)
 			if err != nil {
@@ -60,6 +70,8 @@ func (u *Reindex) Cycle(ctx context.Context) (inbound.IndexResult, error) {
 		if state.Last != nil {
 			next = state.Last.Number + 1
 		}
+		result.Block = nil
+		result.Next = &next
 		eligible, ok := domain.EligibleHeight(head.ID.Number, u.options.Confirmations)
 		if !ok || next > eligible {
 			result.Waiting = true
@@ -77,6 +89,7 @@ func (u *Reindex) Cycle(ctx context.Context) (inbound.IndexResult, error) {
 		if err != nil {
 			return result, err
 		}
+		result.Block = &e.Header.ID
 		if err := e.Validate(); err != nil {
 			return result, err
 		}
@@ -97,6 +110,7 @@ func (u *Reindex) Cycle(ctx context.Context) (inbound.IndexResult, error) {
 			return result, err
 		}
 		result.Processed++
+		result.Completed = append(result.Completed, inbound.IndexedBlock{Block: e.Header.ID, Duration: time.Since(started)})
 	}
 	return result, nil
 }

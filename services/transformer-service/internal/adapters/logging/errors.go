@@ -1,0 +1,41 @@
+package logging
+
+import (
+	"errors"
+
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/logevent"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/application/ports/inbound"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/application/ports/outbound"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/domain"
+)
+
+// ErrorCode exposes only reviewed categories, never underlying error text.
+func ErrorCode(err error) string {
+	for _, entry := range []struct {
+		err  error
+		code string
+	}{
+		{outbound.ErrCommitUnknown, "commit_unknown"},
+		{outbound.ErrLeaseLost, "lease_lost"},
+		{inbound.ErrUnavailable, "unavailable"},
+		{inbound.ErrInvalidEvent, "invalid"},
+		{inbound.ErrUnsupportedVersion, "unsupported"},
+		{inbound.ErrConflict, "conflict"},
+		{domain.ErrInvalid, "invalid"},
+		{domain.ErrIdentity, "identity"},
+		{domain.ErrUnsupported, "unsupported"},
+		{outbound.ErrDeliveryCommitUnknown, "commit_unknown"},
+		{outbound.ErrDeliveryLeaseLost, "lease_lost"},
+		{outbound.ErrPublishACK, "invalid_ack"},
+		{outbound.ErrPublishUnavailable, "unavailable"},
+		{outbound.ErrPublishInvalid, "invalid"},
+		{outbound.ErrPublishConflict, "conflict"},
+		{outbound.ErrPublishOversize, "oversize"},
+		{domain.ErrIncomplete, "incomplete"},
+	} {
+		if errors.Is(err, entry.err) {
+			return entry.code
+		}
+	}
+	return logevent.ErrorCode(err)
+}

@@ -17,7 +17,7 @@ import (
 
 var (
 	ErrDatabase      = errors.New("extractor database operation failed")
-	ErrCommitUnknown = errors.New("extraction transaction outcome unknown; retry the same operation")
+	ErrCommitUnknown = outbound.ErrCommitUnknown
 	ErrCorrupt       = errors.New("inconsistent stored extraction")
 	ErrNotFound      = errors.New("stored extraction not found")
 )

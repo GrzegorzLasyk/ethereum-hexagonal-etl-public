@@ -1,5 +1,8 @@
 # Protobuf contracts and receiver boundary (Stage 6)
 
+Stage 6 records the transport boundary; later stages implement durable receivers
+and dispatch. See the current [operations and release index](operations-stage12.md).
+
 ## Contract and ownership
 
 | Handoff | RPC | Payload schema version 1 |

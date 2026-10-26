@@ -151,6 +151,9 @@ func TestProcessingRetryAndAmbiguousCommit(t *testing.T) {
 	for _, err := range []error{inbound.ErrUnavailable, outbound.ErrCommitUnknown, outbound.ErrLeaseLost} {
 		s := &fakeStore{item: &outbound.Item{Event: event(t), Attempt: 2, MaxAttempts: 3}, completeErr: err}
 		result, got := processor(t, s).ProcessOne(t.Context())
+		if result.EventID != s.item.Event.EventID || result.Attempt != s.item.Attempt {
+			t.Fatalf("lost correlation: %+v", result)
+		}
 		if errors.Is(err, inbound.ErrUnavailable) {
 			if got != nil || result.Outcome != "retry" || s.failure == nil || s.failure.Permanent {
 				t.Fatal(result, got)
