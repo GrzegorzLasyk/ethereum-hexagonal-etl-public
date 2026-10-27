@@ -113,15 +113,33 @@ func TestPublishFailures(t *testing.T) {
 		})
 	}
 }
+
+// publishClientFunc isolates caller-context handling from gRPC's independent
+// client-stream and server deadline timers.
+type publishClientFunc func(context.Context, *etlv1.SubmitRawBlockRequest) (*etlv1.SubmitRawBlockResponse, error)
+
+func (f publishClientFunc) SubmitRawBlock(ctx context.Context, r *etlv1.SubmitRawBlockRequest, _ ...transport.CallOption) (*etlv1.SubmitRawBlockResponse, error) {
+	return f(ctx, r)
+}
+
 func TestPublishLocalBudgetsAndCancellation(t *testing.T) {
-	p := testPublisher(t, func(c context.Context, _ *etlv1.SubmitRawBlockRequest) (*etlv1.SubmitRawBlockResponse, error) {
+	calls := 0
+	p := &Publisher{chain: "1", limits: grpccontract.DefaultLimits(), client: publishClientFunc(func(c context.Context, _ *etlv1.SubmitRawBlockRequest) (*etlv1.SubmitRawBlockResponse, error) {
+		calls++
+		// Wait for the caller's cancellation, not a remote deadline that can
+		// expire before the caller's context timer has been scheduled.
 		<-c.Done()
-		return nil, c.Err()
-	})
+		return nil, status.FromContextError(c.Err()).Err()
+	})}
 	c, cancel := context.WithTimeout(t.Context(), 20*time.Millisecond)
 	defer cancel()
 	if e := p.Publish(c, publication()); !errors.Is(e, context.DeadlineExceeded) {
 		t.Fatal(e)
+	}
+	canceled, cancelNow := context.WithCancel(t.Context())
+	cancelNow()
+	if e := p.Publish(canceled, publication()); !errors.Is(e, context.Canceled) {
+		t.Fatal("pre-canceled publication", e)
 	}
 	p.limits = grpccontract.Limits{PayloadBytes: 1, MessageBytes: 2}
 	if e := p.Publish(t.Context(), publication()); !errors.Is(e, outbound.ErrPublishOversize) {
@@ -130,6 +148,9 @@ func TestPublishLocalBudgetsAndCancellation(t *testing.T) {
 	p.limits = grpccontract.Limits{PayloadBytes: 64, MessageBytes: 65}
 	if e := p.Publish(t.Context(), publication()); !errors.Is(e, outbound.ErrPublishOversize) {
 		t.Fatal("message metadata budget", e)
+	}
+	if calls != 1 {
+		t.Fatalf("local rejection reached RPC client: calls=%d, want 1", calls)
 	}
 	if _, e := New("remote:50051", "1", grpccontract.DefaultLimits()); e == nil {
 		t.Fatal("unsafe target accepted")
@@ -140,4 +161,47 @@ func TestPublishLocalBudgetsAndCancellation(t *testing.T) {
 		t.Fatal(e)
 	}
 	defer conn.Close()
+}
+
+// Exercise cancellation over real gRPC only after the handler has started.
+// No propagated deadline races with cancellation of the caller's context.
+func TestPublishCancellationInFlight(t *testing.T) {
+	started := make(chan struct{})
+	stopped := make(chan error, 1)
+	p := testPublisher(t, func(c context.Context, _ *etlv1.SubmitRawBlockRequest) (*etlv1.SubmitRawBlockResponse, error) {
+		close(started)
+		<-c.Done()
+		stopped <- c.Err()
+		return nil, c.Err()
+	})
+	c, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	guard, stopGuard := context.WithTimeout(t.Context(), time.Second)
+	defer stopGuard()
+	result := make(chan error, 1)
+	go func() { result <- p.Publish(c, publication()) }()
+	select {
+	case <-started:
+	case err := <-result:
+		t.Fatalf("publication ended before cancellation: %v", err)
+	case <-guard.Done():
+		t.Fatal("RPC handler did not start")
+	}
+	cancel()
+	select {
+	case err := <-result:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("caller cancellation: %v", err)
+		}
+	case <-guard.Done():
+		t.Fatal("publication did not stop after cancellation")
+	}
+	select {
+	case err := <-stopped:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("server cancellation: %v", err)
+		}
+	case <-guard.Done():
+		t.Fatal("RPC handler did not observe cancellation")
+	}
 }
