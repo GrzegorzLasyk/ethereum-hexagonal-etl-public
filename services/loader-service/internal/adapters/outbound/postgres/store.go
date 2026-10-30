@@ -24,16 +24,38 @@ type Store struct {
 	chain       domain.ChainID
 	lease       time.Duration
 	maxAttempts int
+	capacity    int
+	batchSize   int
 }
 
 var _ outbound.Inbox = (*Store)(nil)
 var _ outbound.Queue = (*Store)(nil)
 
-func New(pool *pgxpool.Pool, chain domain.ChainID, lease time.Duration, maxAttempts int) (*Store, error) {
+func New(pool *pgxpool.Pool, chain domain.ChainID, lease time.Duration, maxAttempts int, capacities ...int) (*Store, error) {
 	if pool == nil || !chain.Valid() || lease < time.Millisecond || lease > 24*time.Hour || maxAttempts < 1 || maxAttempts > 1000 {
 		return nil, fmt.Errorf("invalid inbox store configuration")
 	}
-	return &Store{pool, chain, lease, maxAttempts}, nil
+	capacity := 128
+	if len(capacities) > 0 {
+		capacity = capacities[0]
+	}
+	if capacity < 1 || capacity > 10000 {
+		return nil, fmt.Errorf("invalid admission capacity")
+	}
+	return &Store{db: pool, chain: chain, lease: lease, maxAttempts: maxAttempts, capacity: capacity, batchSize: DefaultBatchSize}, nil
+}
+
+// NewWithBatchSize configures SQL coalescing without changing transaction boundaries.
+func NewWithBatchSize(pool *pgxpool.Pool, chain domain.ChainID, lease time.Duration, maxAttempts, capacity, batchSize int) (*Store, error) {
+	if batchSize < 1 || batchSize > MaxBatchSize {
+		return nil, fmt.Errorf("invalid SQL batch size")
+	}
+	s, err := New(pool, chain, lease, maxAttempts, capacity)
+	if err != nil {
+		return nil, err
+	}
+	s.batchSize = batchSize
+	return s, nil
 }
 func dbError(err error) error {
 	if errors.Is(err, context.Canceled) {
@@ -83,35 +105,49 @@ func (s *Store) Accept(ctx context.Context, r inbound.AcceptTransformedBlockRequ
 		return false, err
 	}
 	defer rollback(ctx, tx)
+	// Serialize new admissions across all instances of this owning service.
+	// Completion transfers one Transformer slot from Inbox to Outbox atomically;
+	// delivery only decreases outstanding work. Failed rows retain their slot.
+	if _, err = tx.Exec(ctx, "SELECT pg_advisory_xact_lock(14202)"); err != nil {
+		return false, dbError(err)
+	}
+	var exists bool
+	if err = tx.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM loader.inbox_events WHERE event_id=$1)", r.EventID).Scan(&exists); err != nil {
+		return false, dbError(err)
+	}
+	if exists {
+		var identical bool
+		err = tx.QueryRow(ctx, `SELECT
+ (chain_id,block_number,block_hash,parent_hash,event_version,payload_version,provider,extracted_at,payload,source_event_id,transformed_at)
+ IS NOT DISTINCT FROM ($2::text,$3::numeric,$4::bytea,$5::bytea,$6::integer,$7::integer,$8::text,$9::text,$10::bytea,$11::text,$12::text)
+ FROM loader.inbox_events WHERE event_id=$1`, args[:12]...).Scan(&identical)
+		if err != nil {
+			return false, dbError(err)
+		}
+		if !identical {
+			return false, inbound.ErrConflict
+		}
+		return true, nil
+	}
+	full, err := s.admissionFull(ctx, tx)
+	if err != nil {
+		return false, err
+	}
+	if full {
+		return false, inbound.ErrOverloaded
+	}
 	var id string
 	err = tx.QueryRow(ctx, `INSERT INTO loader.inbox_events
  (event_id,chain_id,block_number,block_hash,parent_hash,event_version,payload_version,provider,extracted_at,payload,source_event_id,transformed_at,max_attempts)
  VALUES ($1,$2,$3::numeric,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
  ON CONFLICT (event_id) DO NOTHING RETURNING event_id`, args...).Scan(&id)
-	if err == nil {
-		if err := commit(ctx, tx); err != nil {
-			return false, err
-		}
-		return false, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return false, dbError(err)
-	}
-	// INSERT waits for concurrent identity writers. This following Read Committed
-	// statement sees their committed row and compares ALL immutable event content.
-	var identical bool
-	err = tx.QueryRow(ctx, `SELECT
- (chain_id,block_number,block_hash,parent_hash,event_version,payload_version,provider,extracted_at,payload,source_event_id,transformed_at)
- IS NOT DISTINCT FROM ($2::text,$3::numeric,$4::bytea,$5::bytea,$6::integer,$7::integer,$8::text,$9::text,$10::bytea,$11::text,$12::text)
- FROM loader.inbox_events WHERE event_id=$1`, args[:12]...).Scan(&identical)
 	if err != nil {
 		return false, dbError(err)
 	}
-	if !identical {
-		return false, inbound.ErrConflict
+	if err = commit(ctx, tx); err != nil {
+		return false, err
 	}
-	// No writes on this branch: the record observed above is already durable.
-	return true, nil
+	return false, nil
 }
 
 const eventColumns = `event_id,chain_id,block_number::text,block_hash,parent_hash,event_version,payload_version,provider,extracted_at,payload,source_event_id,transformed_at,attempts,max_attempts`

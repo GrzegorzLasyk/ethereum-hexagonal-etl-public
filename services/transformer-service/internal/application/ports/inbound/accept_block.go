@@ -10,6 +10,7 @@ var (
 	ErrInvalidEvent       = errors.New("invalid event")
 	ErrUnsupportedVersion = errors.New("unsupported event version")
 	ErrConflict           = errors.New("event identity conflict")
+	ErrOverloaded         = errors.New("durable admission capacity exhausted")
 	ErrUnavailable        = errors.New("inbox unavailable")
 	ErrNotImplemented     = errors.New("durable inbox acceptance is not implemented")
 )

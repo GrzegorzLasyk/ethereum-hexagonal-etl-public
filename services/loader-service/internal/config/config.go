@@ -10,10 +10,15 @@ import (
 	"time"
 
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/grpccontract"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/application/ports/outbound"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/domain"
 )
 
 type Config struct {
+	SQLBatchSize                                                                     int
+	AdmissionCapacity                                                                int
+	Resources                                                                        grpccontract.Resources
+	Repair                                                                           *outbound.RepairRequest
 	LogLevel                                                                         slog.Level
 	DatabaseURL                                                                      string
 	ChainID                                                                          domain.ChainID
@@ -55,6 +60,7 @@ func Load() (Config, error) {
 	}{
 		{"LOADER_MAX_PAYLOAD_BYTES", &cfg.Limits.PayloadBytes, 64 << 20, 1, 64 << 20},
 		{"LOADER_MAX_MESSAGE_BYTES", &cfg.Limits.MessageBytes, 65 << 20, 2, 65 << 20},
+		{"LOADER_SQL_BATCH_SIZE", &cfg.SQLBatchSize, 64, 1, 256},
 		{"LOADER_WORKERS", &cfg.Workers, 1, 1, 8},
 		{"LOADER_MAX_ATTEMPTS", &cfg.MaxAttempts, 5, 1, 1000},
 	}
@@ -103,6 +109,20 @@ func Load() (Config, error) {
 	}
 	if cfg.Lease <= cfg.ProcessTimeout || cfg.MaxBackoff < cfg.InitialBackoff {
 		return Config{}, fmt.Errorf("lease must exceed process timeout; max backoff must cover initial backoff")
+	}
+	cfg.Resources, err = grpccontract.LoadResources("LOADER", cfg.Limits)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.AdmissionCapacity = 128
+	if text := os.Getenv("LOADER_MAX_OUTSTANDING_EVENTS"); text != "" {
+		cfg.AdmissionCapacity, err = strconv.Atoi(text)
+	}
+	if err != nil || cfg.AdmissionCapacity < 1 || cfg.AdmissionCapacity > 10000 {
+		return Config{}, fmt.Errorf("invalid LOADER_MAX_OUTSTANDING_EVENTS")
+	}
+	if cfg.Repair, err = loadRepair(string(cfg.ChainID)); err != nil {
+		return Config{}, err
 	}
 	return cfg, nil
 }

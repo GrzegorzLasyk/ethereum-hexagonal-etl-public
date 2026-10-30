@@ -35,6 +35,48 @@ replay and reorg recovery. See the [local setup and test runbook](docs/architect
 
 The approved MVP uses gRPC with Protocol Buffers for transport and service-owned PostgreSQL schemas with transactional outbox/inbox storage for durable, at-least-once handoff. A receiver will acknowledge an event only after its inbox transaction commits. See [ADR 0001](docs/adr/0001-mvp-transport-and-storage.md), [PLAN.md](PLAN.md), and [AGENTS.md](AGENTS.md) for decisions and staged implementation.
 
+## Isolated Mainnet preparation (Stage 13.1)
+
+Stage 13.1 adds a separate retained Compose environment and bounded Extractor
+execution. Setup starts PostgreSQL and the two consumers without calling Ethereum:
+
+```sh
+mkdir -m 700 .mainnet
+go run ./tools/mainnet init .mainnet/local.env
+go run ./tools/mainnet check .mainnet/local.env
+go run ./tools/mainnet up .mainnet/local.env
+# Retains all data and private configuration:
+go run ./tools/mainnet stop .mainnet/local.env
+```
+
+Actual acquisition requires a separately invoked `extract` command, explicit
+Mainnet consent, chain 1, start/end blocks, confirmation/recovery depth and total
+request/time budgets. No endpoint or live consent is supplied by initialization.
+Never reuse fixture storage or print resolved Compose configuration. See the
+[Stage 13 runbook](docs/architecture/mainnet-stage13.md) for all settings, accounting,
+isolation and remaining limitations. Stage 13.2A adds [offline RPC reliability](docs/architecture/rpc-reliability-stage13.md).
+The user reports Stage 13.2B smoke PASS (block 1000000, two transactions, two
+receipts, five requests). Stage 13.3A prepares [Mainnet fixture selection and bounded capture](docs/architecture/mainnet-fixtures-stage13.md):
+versioned metadata, explicit gaps, raw-byte integrity and offline validation.
+No real fixture has been captured; Stages 13.3B–13.5 remain pending.
+
+Stage 13.3B [offline preflight and ordered capture commands](docs/architecture/mainnet-capture-stage13.md)
+are prepared. Use `fixture-capture verify MANIFEST CASE ARTIFACT` to validate
+against the reviewed selection before any next capture. It performs no network
+access and also checks known credentials if the private endpoint is in the
+environment. Live capture still requires separate explicit authorization.
+
+Validate fixture selection without network access:
+
+```sh
+go run ./services/extractor-service/cmd/fixture-capture manifest test/fixtures/mainnet/v1/manifest.json
+```
+
+Capture is a separate, explicitly authorized command, rejected in CI. Its
+maximum is 1000 actual attempts for one pinned block and a two-minute operation
+deadline; the existing smoke maximum remains 100 attempts. Unknown coverage
+(currently type 4 and top-level contract creation) remains pending in the manifest.
+
 ## Prerequisites
 
 Use Go 1.27.3 as declared in the root `go.mod`. Run the following commands from the repository root. Ordinary unit tests need no infrastructure. Running services requires migrated PostgreSQL; integration runners require Docker Engine/Desktop and Compose. No live Ethereum provider or broker is needed for deterministic tests.
@@ -546,20 +588,37 @@ Retries cover transport failures/timeouts, HTTP 408/429/500/502/503/504, and RPC
 
 Create an Infura Ethereum Mainnet endpoint using the [official setup guide](https://docs.infura.io/get-started/infura/). Its URL has the form `https://mainnet.infura.io/v3/<YOUR-API-KEY>`. Store the complete URL privately in `ETHEREUM_RPC_URL`, using a secret store, IDE private environment, or the ignored local `.env` file (mode 600). Do not put a real URL in tracked files, command history, logs, or screenshots. Do not enable shell tracing while loading secrets. Errors deliberately omit URLs, provider message text and response bodies; never log the `Config` value or an HTTP client's request dump. Use a non-secret provider label.
 
-The live test is excluded from ordinary tests by the `live` build tag. It requires an explicit decimal `ETHEREUM_SMOKE_BLOCK` and expects chain ID 1. It uses provider credits and reads one block; it writes no snapshot to disk or database. Select a mined historical block sufficiently behind the head for a manual check; this does not define the future service's finality policy.
+Any live smoke execution requires **separate authorization**. The user reports
+the Stage 13.2B smoke passed for block 1000000 (2 transactions, 2 receipts, 5 requests).
+That run is not repeated by the fixture infrastructure work. Stage
+13.2A prepares and validates its gate offline; it does not run it. Ordinary tests
+and CI do not enable the `live` build tag. The gate also refuses any nonempty
+`CI` or `GITHUB_ACTIONS` variable, and CI explicitly disables opt-in.
 
-If using your own trusted `.env` file, set the two placeholders from `.env.example`, then load them in a subshell and run:
+After authorization, privately supply all five settings from `.env.example`:
+`ETHEREUM_LIVE_MAINNET_OPT_IN=true`, `ETHEREUM_RPC_URL`, an explicit decimal
+`ETHEREUM_SMOKE_BLOCK`, `ETHEREUM_SMOKE_MAX_REQUESTS` between 1 and 100, and
+`ETHEREUM_SMOKE_TIMEOUT` between 1ms and 2m. Missing/invalid configuration fails
+an explicitly invoked test; it never silently skips. No `.env` is loaded automatically.
+
+The smoke accepts only the Infura Mainnet HTTPS host, expects chain ID 1, and
+reads one block with all receipts without writing snapshots or database state.
+The request ceiling counts every HTTP attempt, including retries and chain checks.
+Fixed per-attempt bounds remain 15s, three attempts, 500ms initial/5s maximum
+backoff, 200ms pacing, 8 MiB per response and 64 MiB aggregate raw snapshot.
+It reports only identity, counts, attempted requests and duration; failure to
+collect the complete block is failure, never partial success or a finality claim.
+
+The separately authorized live command would be:
 
 ```sh
-(
-  set -a
-  . ./.env
-  set +a
-  go test -tags live -run '^TestLiveMainnetBlock$' -count=1 -timeout=3m -v ./services/extractor-service/internal/adapters/outbound/jsonrpc
-)
+go test -tags live -run '^TestLiveMainnetBlock$' -count=1 -timeout=2m -v ./services/extractor-service/internal/adapters/outbound/jsonrpc
 ```
 
-Sourcing executes shell syntax; use only your own file with correctly quoted values. No `.env` file is loaded automatically by the test. Missing URL skips it; a missing/invalid block fails when a URL is supplied. The test prints only block identity and transaction/receipt counts. Test-only budgets are 15 seconds per request, 3 attempts, 500 ms initial/5 s maximum backoff, 200 ms pacing, 8 MiB per response, 64 MiB per raw snapshot, and a 2-minute overall deadline. A large block or restricted account can exceed these budgets; such failure is not a successful partial extraction. Production values remain an explicit deployment decision.
+The runner rejects request budgets above 100 and never substitutes `latest` for
+the selected decimal block. The two-minute operation deadline starts before
+acquisition; it excludes Go compilation. See the [Stage 13.2B preflight](docs/architecture/rpc-reliability-stage13.md#stage-132b-preflight--live-execution-pending)
+for the verified two-transaction block 1000000, private-input command and limits.
 
 Compile the opt-in test without contacting a provider:
 
@@ -771,3 +830,123 @@ dc down
 ```
 
 PostgreSQL receives a shutdown signal and has a 30-second grace period. For a deliberate reset of disposable local data only, `dc down --volumes` also deletes the named database volume and all data. Do not use that command for routine shutdown. Back up needed data before any reset or major PostgreSQL version change.
+
+### Authentic Mainnet fixtures: offline ETL regression (Stage 13.3C)
+
+With the three previously captured files available locally and Docker Desktop running:
+
+```sh
+go run ./test/integration/cmd/handoff-postgres --mainnet-fixtures .mainnet/fixtures/stage13-3b
+```
+
+This explicit local mode verifies the pinned manifest, replays original JSON through
+production adapters and checks the complete PostgreSQL/gRPC pipeline. Each height
+uses a separate retained database/checkpoint; no live RPC or new capture occurs.
+Missing private artifacts fail clearly. Normal unit tests and CI use synthetic
+fixtures. See [assertions, verified coverage, retention and CI publication policy](docs/architecture/mainnet-offline-stage13.md)
+and [actual validation results](docs/architecture/validation-stage13-3c.md).
+
+### Live Mainnet E2E preparation (Stage 13.4A)
+
+Finite extraction now drains its Outbox within `EXTRACTOR_DRAIN_TIMEOUT` (default
+30s, maximum 2m, also within the whole-run budget). The read-only command below
+checks the pinned block 1000000 across all three owning runtime roles; checkpoint
+advancement alone cannot pass:
+
+```sh
+go run ./tools/mainnet verify .mainnet/stage13.env
+```
+
+The guarded `e2e` command is prepared for separately authorized live execution:
+1000000..1000000, at most 100 actual RPC attempts, 2m acquisition including drain,
+then at most 2m completion observation. It is forbidden in normal CI. No live
+execution was performed during implementation. See the [safe configuration, commands
+and failure semantics](docs/architecture/mainnet-e2e-stage13.md).
+
+### Mainnet recovery and final acceptance (Stage 13.5)
+
+Use the [Stage 13 operations runbook](docs/architecture/operations-stage13.md) for
+bounded offline drain, audited repair of failed Transformer/Loader queues,
+Extractor replay, restart, reorg limitations and the exact user-only live command.
+Forward migrations add immutable service-owned recovery audits; run the existing
+Mainnet `up` command before using the new binaries. No live RPC runs automatically.
+
+One comprehensive offline validation, preserving all test volumes and artifacts:
+
+```sh
+bash scripts/validate-final.sh offline --opt-in .mainnet/fixtures/stage13-3b
+```
+
+[Validation results and remaining live acceptance](docs/architecture/validation-stage13-final.md)
+are recorded separately. Missing private fixtures or Docker fail explicitly.
+
+### Offline performance baseline (Stage 14.1)
+
+Explicit local benchmark; no live Ethereum RPC and no ordinary CI dependency:
+
+```sh
+go run ./test/integration/cmd/handoff-postgres --baseline --opt-in \
+  --dataset synthetic --blocks 3 --workers 1 --repeat 1 --warmup 0 \
+  --out .mainnet/baseline-smoke
+```
+
+The output directory must be new. Each sample uses its own disposable Compose
+PostgreSQL project and host Go processes. Existing fixtures and volumes are never
+reused or deleted. See [datasets, 1/2/4/8 worker matrix, measurement scope and report
+format](docs/architecture/performance-stage14.md) before interpreting results.
+
+### Resource limits and backpressure (Stage 14.2)
+
+Transformer and Loader default to 128 outstanding events, two incoming gRPC slots,
+a 130 MiB serialized-message reservation budget, 16 connections and a 12-connection
+PostgreSQL pool. Transformer retains capacity until its Outbox is delivered.
+Exact accepted duplicates remain acknowledgeable at capacity; new identities get
+retryable overload. Oversized payloads remain permanent errors, with no truncation.
+
+Apply owning migrations `0006_admission_indexes.sql` before starting updated
+Transformer/Loader binaries. Existing isolated runners handle these automatically.
+See [resource configuration, Compose limits, metrics and outage behavior](docs/architecture/backpressure-stage14.md).
+Worker concurrency remains bounded at 1..8; no automatic retry allowance reset or
+history deletion is introduced.
+
+### Concurrent receipt fetching (Stage 14.3)
+
+`EXTRACTOR_RECEIPT_CONCURRENCY=1` preserves the conservative default; explicit
+values 2..8 enable concurrent receipts within one block. Block heights stay
+sequential. All workers share the RPC budget, pacing and Retry-After cooldown;
+failed batches cannot advance checkpoints or create Outbox work.
+
+See [ordering, cancellation, memory overhead and offline tests](docs/architecture/receipts-stage14.md).
+This setting is passed through the existing fixture and isolated Mainnet Compose
+files; changing it does not authorize live extraction.
+
+### Batched Loader persistence (Stage 14.4)
+
+`LOADER_SQL_BATCH_SIZE=64` groups existing INSERTs in one atomic block transaction.
+Accepted values are 1..256; `1` selects direct writes for comparison. A fixed 1 MiB
+estimated coalescing budget bounds batches; larger individual rows remain intact
+and are sent alone. Per-chain serialization, Inbox fencing, rollback, idempotency
+and `canonical_status=unknown` are preserved. No migration is needed.
+
+See [batching guarantees, tests and offline before/after commands](docs/architecture/loader-batching-stage14.md).
+The baseline runner accepts `--loader-batch-size 1|64` (or any value in 1..256),
+records the setting and measures batch calls/durations. Database execution and
+throughput comparisons remain deferred; fewer submissions are not a measured
+performance claim.
+
+### Final validation and release preparation (Stage 14.5)
+
+Implementation scope is frozen to the three-service Ethereum ETL. The next step
+is comprehensive validation, not additional features. Start with the
+[final configuration audit and release checklist](docs/architecture/release-stage14.md).
+
+```sh
+# Explicit offline acceptance; never starts live Ethereum acquisition.
+bash scripts/validate-final.sh offline --opt-in .mainnet/fixtures/stage13-3b
+```
+
+Separate `performance --opt-in` and `live --opt-in` phases are documented there;
+no command automatically runs all phases. The live phase additionally requires the
+private Mainnet opt-in, block1000000, <=100 attempts and <=2m acquisition. Do not
+confuse prepared workflows, prior-stage checks or an advanced checkpoint with
+final acceptance. Minimal Stage 14.5 checks do not establish production readiness.

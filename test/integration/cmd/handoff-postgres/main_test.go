@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -225,4 +226,75 @@ func TestRetainResources(t *testing.T) {
 	}
 	// This fake created no database; remove only its test credential file.
 	t.Cleanup(func() { _ = os.Remove(filename) })
+}
+
+func TestRealFixtureIsolatedRetainedLifecycle(t *testing.T) {
+	for _, failSeed := range []bool{false, true} {
+		t.Run(fmt.Sprint(failSeed), func(t *testing.T) {
+			var filename, project string
+			seeded, handed, stopped := false, false, false
+			failure := errors.New("seed failed")
+			fixture := realCase{id: "pinned-case", path: "/offline/block.json", manifest: "/offline/manifest.json", digest: "digest"}
+			err := runCase(t.Context(), t.TempDir(), []string{"ETHEREUM_RPC_URL=forbidden", "REAL_FIXTURE_ARTIFACT=inherited", "COMPOSE_FILE=existing", "ETL_TEST_RETAIN=0"}, 54321, func(ctx context.Context, c command) error {
+				for _, entry := range c.env {
+					if strings.Contains(entry, "forbidden") || strings.Contains(entry, "inherited") || strings.Contains(entry, "COMPOSE_FILE=") {
+						t.Fatal("unsafe inherited configuration")
+					}
+				}
+				if c.program == "docker" {
+					filename = argAfter(t, c.args, "--env-file")
+					name := argAfter(t, c.args, "-p")
+					if !strings.HasPrefix(name, "ethereum-stage13c-") || (project != "" && project != name) {
+						t.Fatal("project isolation")
+					}
+					project = name
+					if c.phase == "cleanup" {
+						stopped = true
+						if !reflect.DeepEqual(c.args[len(c.args)-3:], []string{"stop", "-t", "30"}) {
+							t.Fatal("real regression deleted storage")
+						}
+					}
+					return nil
+				}
+				for _, entry := range []string{"REAL_FIXTURE_ARTIFACT=" + fixture.path, "REAL_FIXTURE_CASE=" + fixture.id, "REAL_FIXTURE_SHA256=" + fixture.digest, "REAL_FIXTURE_MANIFEST=" + fixture.manifest, "HANDOFF_TEST_ISOLATED=1"} {
+					found := false
+					for _, e := range c.env {
+						found = found || e == entry
+					}
+					if !found {
+						t.Fatal("missing pinned replay configuration")
+					}
+				}
+				if c.phase == "seed deterministic extraction" {
+					seeded = true
+					if c.expected != "TestSeedRealFixture" || argAfter(t, c.args, "-run") != "^TestSeedRealFixture$" {
+						t.Fatal("synthetic seed substituted")
+					}
+					if failSeed {
+						return failure
+					}
+				} else {
+					handed = true
+					if !seeded || c.expected != "TestHandoff" {
+						t.Fatal("handoff before seed or without PASS gate")
+					}
+				}
+				return nil
+			}, &fixture)
+			if !stopped || !seeded || handed == failSeed || (failSeed && !errors.Is(err, failure)) || (!failSeed && err != nil) {
+				t.Fatal("incorrect failure/retention lifecycle", err)
+			}
+			if _, err := os.Stat(filename); err != nil {
+				t.Fatal("retained configuration missing")
+			}
+			// Only this unit test's fake invocation file is removed; no DB was started.
+			t.Cleanup(func() { _ = os.Remove(filename) })
+		})
+	}
+}
+
+func TestMissingRealFixturesFailBeforeDocker(t *testing.T) {
+	if err := startReal(t.Context(), t.TempDir()); err == nil {
+		t.Fatal("missing private inputs silently accepted")
+	}
 }

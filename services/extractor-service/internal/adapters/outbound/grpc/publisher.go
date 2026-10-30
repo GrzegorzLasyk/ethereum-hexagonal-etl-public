@@ -3,6 +3,7 @@ package grpc
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	etlv1 "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/gen/etl/v1"
@@ -70,6 +71,9 @@ func (p *Publisher) Publish(ctx context.Context, e outbound.Publication) error {
 	if err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if grpccontract.IsOverloaded(err) {
+			return errors.Join(outbound.ErrPublishOverloaded, outbound.ErrPublishUnavailable)
 		}
 		switch status.Code(err) {
 		case codes.InvalidArgument, codes.FailedPrecondition, codes.PermissionDenied, codes.Unauthenticated:

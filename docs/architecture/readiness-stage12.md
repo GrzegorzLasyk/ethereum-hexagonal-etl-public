@@ -140,3 +140,12 @@ The full fixture E2E checks startup with the required migrations, readiness duri
 PostgreSQL outage/recovery and restarts, downstream independence, existing metrics,
 correlated logs, durable ETL data and simulated reorg. No real Infura calls or
 new deployment stack are involved.
+
+## Stage 13.5 forward schema update
+
+Transformer and Loader also require `0005_recovery_operations.sql`, its immutable
+service-owned audit table/primary key and exact SELECT/INSERT grants. Inbox
+`max_attempts` becomes an allowed mutable column for explicit audited repair.
+The runtime still cannot update/delete audit rows or access another schema.
+Old binaries' exact readiness inventories are intentionally incompatible; deploy
+matching migrations/binaries through the documented maintenance procedure.

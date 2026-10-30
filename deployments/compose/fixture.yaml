@@ -24,6 +24,9 @@ services:
     profiles: ["tools", "fixture"]
 
   fixture:
+    cpus: ${FIXTURE_CPUS:-0.5}
+    mem_limit: ${FIXTURE_MEM_LIMIT:-256m}
+    memswap_limit: ${FIXTURE_MEM_LIMIT:-256m}
     image: ethereum-etl-fixture:local
     build:
       context: ../..
@@ -43,12 +46,19 @@ services:
       test: ["CMD", "/app/probe", "http://127.0.0.1:8545/ready"]
 
   extractor:
+    cpus: ${EXTRACTOR_CPUS:-1.0}
+    mem_limit: ${EXTRACTOR_MEM_LIMIT:-2g}
+    memswap_limit: ${EXTRACTOR_MEM_LIMIT:-2g}
     <<: *app
     entrypoint: ["/app/extractor"]
     depends_on:
       fixture: {condition: service_healthy}
       migrate-extractor: {condition: service_completed_successfully}
     environment:
+      GOMEMLIMIT: ${EXTRACTOR_GO_MEMORY_LIMIT:-1536MiB}
+      EXTRACTOR_RECEIPT_CONCURRENCY: ${EXTRACTOR_RECEIPT_CONCURRENCY:-1}
+      EXTRACTOR_DB_MAX_CONNECTIONS: ${EXTRACTOR_DB_MAX_CONNECTIONS:-12}
+      EXTRACTOR_DISPATCH_WORKERS: ${EXTRACTOR_DISPATCH_WORKERS:-1}
       EXTRACTOR_DATABASE_URL: postgres://extractor_runtime:${EXTRACTOR_RUNTIME_PASSWORD:?Set EXTRACTOR_RUNTIME_PASSWORD}@postgres:5432/ethereum_etl?sslmode=disable
       EXTRACTOR_CHAIN_ID: "1"
       EXTRACTOR_MODE: index
@@ -78,12 +88,23 @@ services:
       test: ["CMD", "/app/probe", "http://127.0.0.1:8091/ready"]
 
   transformer:
+    cpus: ${TRANSFORMER_CPUS:-1.0}
+    mem_limit: ${TRANSFORMER_MEM_LIMIT:-2g}
+    memswap_limit: ${TRANSFORMER_MEM_LIMIT:-2g}
     <<: *app
     entrypoint: ["/app/transformer"]
     depends_on:
       fixture: {condition: service_healthy}
       migrate-transformer: {condition: service_completed_successfully}
     environment:
+      GOMEMLIMIT: ${TRANSFORMER_GO_MEMORY_LIMIT:-1536MiB}
+      TRANSFORMER_DB_MAX_CONNECTIONS: ${TRANSFORMER_DB_MAX_CONNECTIONS:-12}
+      TRANSFORMER_MAX_OUTSTANDING_EVENTS: ${TRANSFORMER_MAX_OUTSTANDING_EVENTS:-128}
+      TRANSFORMER_MAX_INCOMING_REQUESTS: ${TRANSFORMER_MAX_INCOMING_REQUESTS:-2}
+      TRANSFORMER_MAX_INFLIGHT_BYTES: ${TRANSFORMER_MAX_INFLIGHT_BYTES:-136314880}
+      TRANSFORMER_MAX_GRPC_CONNECTIONS: ${TRANSFORMER_MAX_GRPC_CONNECTIONS:-16}
+      TRANSFORMER_WORKERS: ${TRANSFORMER_WORKERS:-1}
+      TRANSFORMER_DISPATCH_WORKERS: ${TRANSFORMER_DISPATCH_WORKERS:-1}
       TRANSFORMER_DATABASE_URL: postgres://transformer_runtime:${TRANSFORMER_RUNTIME_PASSWORD:?Set TRANSFORMER_RUNTIME_PASSWORD}@postgres:5432/ethereum_etl?sslmode=disable
       TRANSFORMER_CHAIN_ID: "1"
       TRANSFORMER_GRPC_ADDRESS: 127.0.0.1:50051
@@ -105,12 +126,23 @@ services:
       test: ["CMD", "/app/probe", "http://127.0.0.1:8092/ready"]
 
   loader:
+    cpus: ${LOADER_CPUS:-1.0}
+    mem_limit: ${LOADER_MEM_LIMIT:-2g}
+    memswap_limit: ${LOADER_MEM_LIMIT:-2g}
     <<: *app
     entrypoint: ["/app/loader"]
     depends_on:
       fixture: {condition: service_healthy}
       migrate-loader: {condition: service_completed_successfully}
     environment:
+      GOMEMLIMIT: ${LOADER_GO_MEMORY_LIMIT:-1536MiB}
+      LOADER_DB_MAX_CONNECTIONS: ${LOADER_DB_MAX_CONNECTIONS:-12}
+      LOADER_MAX_OUTSTANDING_EVENTS: ${LOADER_MAX_OUTSTANDING_EVENTS:-128}
+      LOADER_MAX_INCOMING_REQUESTS: ${LOADER_MAX_INCOMING_REQUESTS:-2}
+      LOADER_MAX_INFLIGHT_BYTES: ${LOADER_MAX_INFLIGHT_BYTES:-136314880}
+      LOADER_MAX_GRPC_CONNECTIONS: ${LOADER_MAX_GRPC_CONNECTIONS:-16}
+      LOADER_SQL_BATCH_SIZE: ${LOADER_SQL_BATCH_SIZE:-64}
+      LOADER_WORKERS: ${LOADER_WORKERS:-1}
       LOADER_DATABASE_URL: postgres://loader_runtime:${LOADER_RUNTIME_PASSWORD:?Set LOADER_RUNTIME_PASSWORD}@postgres:5432/ethereum_etl?sslmode=disable
       LOADER_CHAIN_ID: "1"
       LOADER_GRPC_ADDRESS: 127.0.0.1:50052

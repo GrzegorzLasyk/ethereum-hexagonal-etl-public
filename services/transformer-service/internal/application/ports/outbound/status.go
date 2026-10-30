@@ -9,8 +9,9 @@ type QueueStatus struct {
 	OldestAgeSeconds                float64
 }
 type Status struct {
-	Inbox  QueueStatus
-	Outbox QueueStatus
+	AdmissionUsed, AdmissionLimit int64
+	Inbox                         QueueStatus
+	Outbox                        QueueStatus
 }
 
 // StatusReader must return an error, never an empty successful view, on failure.

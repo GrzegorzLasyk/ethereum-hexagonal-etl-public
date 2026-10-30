@@ -16,7 +16,9 @@ func ErrorCode(err error) string {
 		code string
 	}{
 		{outbound.ErrCommitUnknown, "commit_unknown"},
+		{outbound.ErrRepairRefused, "repair_refused"},
 		{outbound.ErrLeaseLost, "lease_lost"},
+		{inbound.ErrOverloaded, "overloaded"},
 		{inbound.ErrUnavailable, "unavailable"},
 		{inbound.ErrInvalidEvent, "invalid"},
 		{inbound.ErrUnsupportedVersion, "unsupported"},
@@ -27,6 +29,7 @@ func ErrorCode(err error) string {
 		{outbound.ErrDeliveryCommitUnknown, "commit_unknown"},
 		{outbound.ErrDeliveryLeaseLost, "lease_lost"},
 		{outbound.ErrPublishACK, "invalid_ack"},
+		{outbound.ErrPublishOverloaded, "overloaded"},
 		{outbound.ErrPublishUnavailable, "unavailable"},
 		{outbound.ErrPublishInvalid, "invalid"},
 		{outbound.ErrPublishConflict, "conflict"},

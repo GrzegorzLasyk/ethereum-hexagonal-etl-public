@@ -14,7 +14,7 @@ import (
 
 var bounds = [...]float64{.001, .01, .1, .5, 1, 5, 30, 120}
 var outcomes = [...]string{"completed", "delivered", "retry", "failed", "interrupted", "unknown", "waiting", "backpressure", "done", "rewound", "progress"}
-var operations = map[string]bool{"process_inbox": true, "dispatch_outbox": true, "claim_inbox": true, "claim_outbox": true, "persist_block": true, "index_cycle": true, "reindex_cycle": true, "index_block": true, "reindex_block": true}
+var operations = map[string]bool{"fetch_receipts": true, "process_inbox": true, "dispatch_outbox": true, "claim_inbox": true, "claim_outbox": true, "persist_block": true, "index_cycle": true, "reindex_cycle": true, "index_block": true, "reindex_block": true}
 
 type operation struct {
 	Counts            map[string]uint64
@@ -24,6 +24,8 @@ type operation struct {
 	Retries, Failures uint64
 }
 type Registry struct {
+	rpc             rpcMetrics
+	admission       admissionMetrics
 	mu              sync.Mutex
 	ops             map[string]*operation
 	started         time.Time
@@ -118,10 +120,11 @@ type Queue struct {
 	OldestAge                       float64
 }
 type Snapshot struct {
-	Queues     []Queue
-	Extractor  bool
-	Checkpoint *uint64
-	Revision   int64
+	AdmissionUsed, AdmissionLimit int64
+	Queues                        []Queue
+	Extractor                     bool
+	Checkpoint                    *uint64
+	Revision                      int64
 }
 
 func family(b *bytes.Buffer, name, kind, help string) {
@@ -171,6 +174,8 @@ func (r *Registry) Handler(read func(context.Context) (Snapshot, error)) http.Ha
 		}
 		gauge(&b, "etl_database_snapshot_last_success_timestamp_seconds", "Last successful database snapshot Unix time; 0 before first success.", last)
 		r.writeOperations(&b)
+		r.writeAdmission(&b)
+		r.writeRPC(&b)
 		if !r.headAt.IsZero() {
 			gauge(&b, "etl_extractor_head", "Last successfully observed provider head height.", r.head)
 			gauge(&b, "etl_extractor_head_observed_timestamp_seconds", "Provider head observation Unix time.", float64(r.headAt.UnixNano())/1e9)
@@ -183,6 +188,12 @@ func (r *Registry) Handler(read func(context.Context) (Snapshot, error)) http.Ha
 		}
 		if success {
 			r.writeSnapshot(&b, snapshot)
+			if snapshot.AdmissionLimit > 0 {
+				gauge(&b, "etl_admission_outstanding_events", "Service-global outstanding Inbox plus Outbox work including failed rows.", snapshot.AdmissionUsed)
+				gauge(&b, "etl_admission_event_capacity", "Configured service-global durable admission capacity.", snapshot.AdmissionLimit)
+				gauge(&b, "etl_admission_capacity_utilization", "Outstanding events divided by capacity; may exceed one after lowering limits.", float64(snapshot.AdmissionUsed)/float64(snapshot.AdmissionLimit))
+				gauge(&b, "etl_admission_durable_backpressure", "1 when new durable admissions are blocked by capacity.", flag(snapshot.AdmissionUsed >= snapshot.AdmissionLimit))
+			}
 		}
 		r.mu.Unlock()
 		w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")

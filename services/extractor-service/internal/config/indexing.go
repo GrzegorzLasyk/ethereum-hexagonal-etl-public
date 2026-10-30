@@ -14,6 +14,8 @@ import (
 
 type IndexingConfig struct {
 	Mode          string
+	RunTimeout    time.Duration
+	DrainTimeout  time.Duration
 	Options       usecases.IndexOptions
 	RPC           jsonrpc.Config
 	Poll, Timeout time.Duration
@@ -30,6 +32,25 @@ func loadIndexing(c Config) (IndexingConfig, error) {
 	if x.Mode == "dispatch" {
 		return x, nil
 	}
+	if x.Mode == "drain" {
+		var err error
+		x.Options.Chain = c.ChainID
+		if x.Options.Start, err = uintSetting("EXTRACTOR_START_BLOCK", 0, true); err != nil {
+			return x, err
+		}
+		end, err := uintSetting("EXTRACTOR_END_BLOCK", 0, true)
+		if err != nil || end < x.Options.Start {
+			return x, fmt.Errorf("drain requires explicit ordered range")
+		}
+		x.Options.End = &end
+		x.DrainTimeout, err = durationSetting("EXTRACTOR_DRAIN_TIMEOUT", 30*time.Second)
+		if err != nil || x.DrainTimeout > 2*time.Minute {
+			return x, fmt.Errorf("invalid EXTRACTOR_DRAIN_TIMEOUT")
+		}
+		x.RunTimeout = x.DrainTimeout + 10*time.Second
+		return x, nil
+	}
+
 	if x.Mode != "index" && x.Mode != "reindex" && x.Mode != "replay" {
 		return x, fmt.Errorf("EXTRACTOR_MODE must be dispatch, index, reindex or replay")
 	}
@@ -94,6 +115,12 @@ func loadIndexing(c Config) (IndexingConfig, error) {
 		return x, err
 	}
 	x.Options = o
+	if x.DrainTimeout, err = durationSetting("EXTRACTOR_DRAIN_TIMEOUT", 30*time.Second); err != nil {
+		return x, err
+	}
+	if x.DrainTimeout > 2*time.Minute {
+		return x, fmt.Errorf("EXTRACTOR_DRAIN_TIMEOUT must not exceed 2m")
+	}
 	if x.Poll, err = durationSetting("EXTRACTOR_POLL_INTERVAL", 3*time.Second); err != nil {
 		return x, err
 	}
@@ -106,10 +133,18 @@ func loadIndexing(c Config) (IndexingConfig, error) {
 	}
 	x.MaxErrors = int(failures)
 	x.RPC = jsonrpc.Config{URL: os.Getenv("EXTRACTOR_RPC_URL"), Provider: os.Getenv("EXTRACTOR_RPC_PROVIDER"), ChainID: c.ChainID, MaxAttempts: 3, InitialBackoff: time.Second, MaxBackoff: 30 * time.Second, MaxSnapshotBytes: int64(c.Limits.PayloadBytes), MaxResponseBytes: int64(min(16<<20, c.Limits.PayloadBytes))}
+	concurrency, e := uintSetting("EXTRACTOR_RECEIPT_CONCURRENCY", jsonrpc.DefaultReceiptConcurrency, false)
+	if e != nil || concurrency < 1 || concurrency > jsonrpc.MaxReceiptConcurrency {
+		return x, fmt.Errorf("EXTRACTOR_RECEIPT_CONCURRENCY must be 1..8")
+	}
+	x.RPC.ReceiptConcurrency = int(concurrency)
 	if x.RPC.RequestTimeout, err = durationSetting("EXTRACTOR_RPC_TIMEOUT", 10*time.Second); err != nil {
 		return x, err
 	}
 	if x.RPC.MinRequestInterval, err = durationSetting("EXTRACTOR_RPC_INTERVAL", 200*time.Millisecond); err != nil {
+		return x, err
+	}
+	if err = loadExecutionSafety(c, &x); err != nil {
 		return x, err
 	}
 	// Constructor validates URL/provider and all transport budgets without I/O.

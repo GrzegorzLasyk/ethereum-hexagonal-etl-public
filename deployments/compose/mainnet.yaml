@@ -1,0 +1,203 @@
+# Standalone Mainnet environment; never combine with fixture/base overlays.
+name: ethereum-etl-mainnet
+
+x-client: &client
+  image: postgres:17.11-bookworm
+  depends_on:
+    postgres:
+      condition: service_healthy
+  volumes:
+    - ./scripts:/scripts:ro
+    - ../../migrations:/migrations:ro
+  entrypoint: ["/bin/bash", "/scripts/migrate.sh"]
+
+x-connection: &connection
+  PGHOST: postgres
+  PGPORT: "5432"
+  PGDATABASE: ethereum_etl
+  PGCONNECT_TIMEOUT: "5"
+
+services:
+  postgres:
+    cpus: ${POSTGRES_CPUS:-2.0}
+    mem_limit: ${POSTGRES_MEM_LIMIT:-2g}
+    memswap_limit: ${POSTGRES_MEM_LIMIT:-2g}
+    image: postgres:17.11-bookworm
+    environment:
+      POSTGRES_DB: ethereum_etl
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_INITDB_ARGS: "--auth-host=scram-sha-256 --auth-local=scram-sha-256"
+      EXTRACTOR_MIGRATOR_PASSWORD: ${EXTRACTOR_MIGRATOR_PASSWORD:?Set EXTRACTOR_MIGRATOR_PASSWORD in .env}
+      EXTRACTOR_RUNTIME_PASSWORD: ${EXTRACTOR_RUNTIME_PASSWORD:?Set EXTRACTOR_RUNTIME_PASSWORD in .env}
+      TRANSFORMER_MIGRATOR_PASSWORD: ${TRANSFORMER_MIGRATOR_PASSWORD:?Set TRANSFORMER_MIGRATOR_PASSWORD in .env}
+      TRANSFORMER_RUNTIME_PASSWORD: ${TRANSFORMER_RUNTIME_PASSWORD:?Set TRANSFORMER_RUNTIME_PASSWORD in .env}
+      LOADER_MIGRATOR_PASSWORD: ${LOADER_MIGRATOR_PASSWORD:?Set LOADER_MIGRATOR_PASSWORD in .env}
+      LOADER_RUNTIME_PASSWORD: ${LOADER_RUNTIME_PASSWORD:?Set LOADER_RUNTIME_PASSWORD in .env}
+    volumes:
+      - mainnet_postgres_data:/var/lib/postgresql/data
+      - ./init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "PGPASSWORD=\"$$POSTGRES_PASSWORD\" psql -X -w -h 127.0.0.1 -U postgres -d ethereum_etl -tAc 'SELECT 1' >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    stop_grace_period: 30s
+
+  migrate-extractor:
+    <<: *client
+    environment:
+      <<: *connection
+      PGUSER: extractor_migrator
+      PGPASSWORD: ${EXTRACTOR_MIGRATOR_PASSWORD:?Set EXTRACTOR_MIGRATOR_PASSWORD in .env}
+    command: ["extractor"]
+
+  migrate-transformer:
+    <<: *client
+    environment:
+      <<: *connection
+      PGUSER: transformer_migrator
+      PGPASSWORD: ${TRANSFORMER_MIGRATOR_PASSWORD:?Set TRANSFORMER_MIGRATOR_PASSWORD in .env}
+    command: ["transformer"]
+
+  migrate-loader:
+    <<: *client
+    environment:
+      <<: *connection
+      PGUSER: loader_migrator
+      PGPASSWORD: ${LOADER_MIGRATOR_PASSWORD:?Set LOADER_MIGRATOR_PASSWORD in .env}
+    command: ["loader"]
+
+  verify:
+    profiles: ["tools"]
+    <<: *client
+    entrypoint: ["/bin/bash", "/tests/postgres.sh"]
+    environment:
+      <<: *connection
+      EXTRACTOR_MIGRATOR_PASSWORD: ${EXTRACTOR_MIGRATOR_PASSWORD:?Set EXTRACTOR_MIGRATOR_PASSWORD in .env}
+      EXTRACTOR_RUNTIME_PASSWORD: ${EXTRACTOR_RUNTIME_PASSWORD:?Set EXTRACTOR_RUNTIME_PASSWORD in .env}
+      TRANSFORMER_MIGRATOR_PASSWORD: ${TRANSFORMER_MIGRATOR_PASSWORD:?Set TRANSFORMER_MIGRATOR_PASSWORD in .env}
+      TRANSFORMER_RUNTIME_PASSWORD: ${TRANSFORMER_RUNTIME_PASSWORD:?Set TRANSFORMER_RUNTIME_PASSWORD in .env}
+      LOADER_MIGRATOR_PASSWORD: ${LOADER_MIGRATOR_PASSWORD:?Set LOADER_MIGRATOR_PASSWORD in .env}
+      LOADER_RUNTIME_PASSWORD: ${LOADER_RUNTIME_PASSWORD:?Set LOADER_RUNTIME_PASSWORD in .env}
+    volumes:
+      - ./scripts:/scripts:ro
+      - ../../migrations:/migrations:ro
+      - ../../test/integration:/tests:ro
+
+
+  extractor: &app
+    cpus: ${EXTRACTOR_CPUS:-1.0}
+    mem_limit: ${EXTRACTOR_MEM_LIMIT:-2g}
+    memswap_limit: ${EXTRACTOR_MEM_LIMIT:-2g}
+    image: ethereum-etl-mainnet:local
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile
+    profiles: ["acquisition"]
+    network_mode: service:postgres
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt: ["no-new-privileges:true"]
+    restart: "no"
+    stop_grace_period: 30s
+    entrypoint: ["/app/extractor"]
+    environment:
+      GOMEMLIMIT: ${EXTRACTOR_GO_MEMORY_LIMIT:-1536MiB}
+      EXTRACTOR_RPC_INTERVAL: ${EXTRACTOR_RPC_INTERVAL:-200ms}
+      EXTRACTOR_RPC_TIMEOUT: ${EXTRACTOR_RPC_TIMEOUT:-10s}
+      EXTRACTOR_RECEIPT_CONCURRENCY: ${EXTRACTOR_RECEIPT_CONCURRENCY:-1}
+      EXTRACTOR_DB_MAX_CONNECTIONS: ${EXTRACTOR_DB_MAX_CONNECTIONS:-12}
+      EXTRACTOR_DISPATCH_WORKERS: ${EXTRACTOR_DISPATCH_WORKERS:-1}
+      EXTRACTOR_DATABASE_URL: postgres://extractor_runtime:${EXTRACTOR_RUNTIME_PASSWORD:?Required}@127.0.0.1:5432/ethereum_etl?sslmode=disable
+      EXTRACTOR_ENVIRONMENT: mainnet
+      EXTRACTOR_MAINNET_OPT_IN: ${EXTRACTOR_MAINNET_OPT_IN:-false}
+      EXTRACTOR_CHAIN_ID: ${EXTRACTOR_CHAIN_ID:?Required}
+      EXTRACTOR_MODE: index
+      EXTRACTOR_START_BLOCK: ${EXTRACTOR_START_BLOCK:-}
+      EXTRACTOR_END_BLOCK: ${EXTRACTOR_END_BLOCK:-}
+      EXTRACTOR_CONFIRMATION_DEPTH: ${EXTRACTOR_CONFIRMATION_DEPTH:-}
+      EXTRACTOR_RECOVERY_DEPTH: ${EXTRACTOR_RECOVERY_DEPTH:-}
+      EXTRACTOR_MAX_RPC_REQUESTS: ${EXTRACTOR_MAX_RPC_REQUESTS:-}
+      EXTRACTOR_RUN_TIMEOUT: ${EXTRACTOR_RUN_TIMEOUT:-}
+      EXTRACTOR_DRAIN_TIMEOUT: ${EXTRACTOR_DRAIN_TIMEOUT:-30s}
+      EXTRACTOR_MAX_OUTSTANDING_EVENTS: ${EXTRACTOR_MAX_OUTSTANDING_EVENTS:?Required}
+      EXTRACTOR_MAX_OUTSTANDING_BYTES: ${EXTRACTOR_MAX_OUTSTANDING_BYTES:?Required}
+      EXTRACTOR_MAX_DATABASE_BYTES: ${EXTRACTOR_MAX_DATABASE_BYTES:?Required}
+      EXTRACTOR_RPC_URL: ${EXTRACTOR_RPC_URL:-}
+      EXTRACTOR_RPC_PROVIDER: infura-mainnet
+      EXTRACTOR_HEALTH_ADDRESS: 127.0.0.1:8091
+      EXTRACTOR_DISPATCH_TARGET: 127.0.0.1:50051
+    healthcheck:
+      test: ["CMD", "/app/probe", "http://127.0.0.1:8091/ready"]
+      interval: 2s
+      timeout: 3s
+      retries: 3
+    depends_on:
+      postgres: {condition: service_healthy}
+      migrate-extractor: {condition: service_completed_successfully}
+
+  transformer:
+    cpus: ${TRANSFORMER_CPUS:-1.0}
+    mem_limit: ${TRANSFORMER_MEM_LIMIT:-2g}
+    memswap_limit: ${TRANSFORMER_MEM_LIMIT:-2g}
+    <<: *app
+    profiles: []
+    entrypoint: ["/app/transformer"]
+    environment:
+      GOMEMLIMIT: ${TRANSFORMER_GO_MEMORY_LIMIT:-1536MiB}
+      TRANSFORMER_DB_MAX_CONNECTIONS: ${TRANSFORMER_DB_MAX_CONNECTIONS:-12}
+      TRANSFORMER_MAX_OUTSTANDING_EVENTS: ${TRANSFORMER_MAX_OUTSTANDING_EVENTS:-128}
+      TRANSFORMER_MAX_INCOMING_REQUESTS: ${TRANSFORMER_MAX_INCOMING_REQUESTS:-2}
+      TRANSFORMER_MAX_INFLIGHT_BYTES: ${TRANSFORMER_MAX_INFLIGHT_BYTES:-136314880}
+      TRANSFORMER_MAX_GRPC_CONNECTIONS: ${TRANSFORMER_MAX_GRPC_CONNECTIONS:-16}
+      TRANSFORMER_WORKERS: ${TRANSFORMER_WORKERS:-1}
+      TRANSFORMER_DISPATCH_WORKERS: ${TRANSFORMER_DISPATCH_WORKERS:-1}
+      TRANSFORMER_DATABASE_URL: postgres://transformer_runtime:${TRANSFORMER_RUNTIME_PASSWORD:?Required}@127.0.0.1:5432/ethereum_etl?sslmode=disable
+      TRANSFORMER_CHAIN_ID: ${EXTRACTOR_CHAIN_ID:?Required}
+      TRANSFORMER_GRPC_ADDRESS: 127.0.0.1:50051
+      TRANSFORMER_HEALTH_ADDRESS: 127.0.0.1:8092
+      TRANSFORMER_DISPATCH_TARGET: 127.0.0.1:50052
+    healthcheck:
+      test: ["CMD", "/app/probe", "http://127.0.0.1:8092/ready"]
+      interval: 2s
+      timeout: 3s
+      retries: 3
+    depends_on:
+      postgres: {condition: service_healthy}
+      migrate-transformer: {condition: service_completed_successfully}
+
+  loader:
+    cpus: ${LOADER_CPUS:-1.0}
+    mem_limit: ${LOADER_MEM_LIMIT:-2g}
+    memswap_limit: ${LOADER_MEM_LIMIT:-2g}
+    <<: *app
+    profiles: []
+    entrypoint: ["/app/loader"]
+    environment:
+      GOMEMLIMIT: ${LOADER_GO_MEMORY_LIMIT:-1536MiB}
+      LOADER_DB_MAX_CONNECTIONS: ${LOADER_DB_MAX_CONNECTIONS:-12}
+      LOADER_MAX_OUTSTANDING_EVENTS: ${LOADER_MAX_OUTSTANDING_EVENTS:-128}
+      LOADER_MAX_INCOMING_REQUESTS: ${LOADER_MAX_INCOMING_REQUESTS:-2}
+      LOADER_MAX_INFLIGHT_BYTES: ${LOADER_MAX_INFLIGHT_BYTES:-136314880}
+      LOADER_MAX_GRPC_CONNECTIONS: ${LOADER_MAX_GRPC_CONNECTIONS:-16}
+      LOADER_SQL_BATCH_SIZE: ${LOADER_SQL_BATCH_SIZE:-64}
+      LOADER_WORKERS: ${LOADER_WORKERS:-1}
+      LOADER_DATABASE_URL: postgres://loader_runtime:${LOADER_RUNTIME_PASSWORD:?Required}@127.0.0.1:5432/ethereum_etl?sslmode=disable
+      LOADER_CHAIN_ID: ${EXTRACTOR_CHAIN_ID:?Required}
+      LOADER_GRPC_ADDRESS: 127.0.0.1:50052
+      LOADER_HEALTH_ADDRESS: 127.0.0.1:8093
+    healthcheck:
+      test: ["CMD", "/app/probe", "http://127.0.0.1:8093/ready"]
+      interval: 2s
+      timeout: 3s
+      retries: 3
+    depends_on:
+      postgres: {condition: service_healthy}
+      migrate-loader: {condition: service_completed_successfully}
+
+volumes:
+  mainnet_postgres_data:
+    labels:
+      ethereum-etl.environment: mainnet

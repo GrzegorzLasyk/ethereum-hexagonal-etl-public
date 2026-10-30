@@ -61,13 +61,13 @@ FROM loader.inbox_events WHERE status <> 'completed' ORDER BY accepted_at LIMIT 
 | Expired sending/processing lease | Restart worker; lease reclamation fences the old attempt. Final exhausted claims become failed. Do not lower attempts or edit lease tokens. |
 | Lost ACK or ambiguous COMMIT | Preserve the same ID and bytes. Existing retry/claim paths observe committed state or safely retry. Do not declare rollback solely from a network error. |
 | Failed Extractor Outbox | Fix receiver/configuration first. Use the bounded, audited `EXTRACTOR_MODE=replay` command in Stage 10, with exact retained event ID and a new repair operation ID. Repeating the same operation ID does not add another allowance. Then run dispatch and verify acceptance/processing. |
-| Failed Transformer Inbox | No supported reset/reprocess command exists. Duplicate delivery acknowledges the retained Inbox entry without rescheduling it. Preserve it and its source, investigate semantic errors, and request a separately reviewed service-owned repair/versioning operation. |
-| Failed Transformer Outbox | No supported replay command exists for this queue. Fixing configuration or restarting does not replenish a pinned exhausted budget. Retain the event and request an audited service-owned repair; Extractor replay does not repair this Outbox. |
-| Failed Loader Inbox | No supported reset/reprocess command exists. Preserve the exact accepted input and normalized candidates. Plan a reviewed local repair after understanding the cause; upstream replay alone only deduplicates. |
+| Failed Transformer Inbox | Stage 13.5 adds an explicit audited own-service repair for a single failed event. Fix the cause, grant a finite allowance and verify processing. Duplicate upstream delivery alone still only deduplicates. See the [Stage 13 runbook](operations-stage13.md#explicit-failed-event-repair). |
+| Failed Transformer Outbox | Use the Stage 13.5 audited Transformer Outbox repair after correcting the cause. Restart or Extractor replay does not replenish this queue’s exhausted budget. |
+| Failed Loader Inbox | Use the Stage 13.5 audited Loader Inbox repair after correcting the cause. Exact accepted input and all normalized candidates are retained; upstream replay alone only deduplicates. |
 | Invalid/unsupported/conflicting payload | Do not edit the retained bytes under the same event ID. Contract/semantic changes require an approved versioning decision and tests. |
 | Deep or unprovable reorg | Halt acquisition and investigate provider and retained ancestry. No force rewind, deletion or downstream canonical promotion. See ADR 0004. |
 
-Failed-event repair gaps are release limitations, not undocumented permission to
+The explicit Stage 13.5 repair commands are not permission to
 run manual UPDATE/DELETE statements. Do not truncate an Inbox to defeat deduplication,
 reset completed processing, erase failed rows or lower a checkpoint. Whole-system
 restore is disaster recovery, not a routine poison-event retry mechanism.
@@ -131,3 +131,13 @@ not those regression semantics. Existing default CI cleanup remains limited to
 fresh disposable projects; this Stage 12.5 verification uses retention mode.
 No automated history or backup deletion is introduced. Retained resources consume
 disk until an operator explicitly authorizes disposal of those specific fixtures.
+
+## Final Stage 14 configuration and release review
+
+Use the [Stage 14.5 audit/checklist](release-stage14.md) and its single validation
+entry point for the final tree. Failed queues now have Stage 13 owning-service,
+audited finite repair; upstream duplicate delivery still does not reset failed
+processing. Under Stage 14 capacity limits, failed rows retain their slots:
+restore Loader capacity and repair downstream failures before reopening upstream
+acquisition. Restart alone does not clear failure states. Keep original payloads,
+identities and history. No direct SQL reset or retention deletion is authorized.

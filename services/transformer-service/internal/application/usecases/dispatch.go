@@ -58,6 +58,8 @@ func (u *Dispatch) DispatchOne(ctx context.Context) (inbound.DispatchResult, err
 	case errors.Is(err, outbound.ErrPublishOversize):
 		failure.Code = "oversize"
 		failure.Permanent = true
+	case errors.Is(err, outbound.ErrPublishOverloaded):
+		failure.Code = "overloaded"
 	case errors.Is(err, outbound.ErrPublishACK):
 		failure.Code = "invalid_ack"
 	}

@@ -166,3 +166,16 @@ aged/failed/in-flight work, chain isolation and checkpoint rewind revision.
 The fixture E2E checks actual endpoints through outages/recovery, retries,
 service restart, final durable counts, Loader persistence and simulated reorg.
 All tests use local deterministic fixtures, with no real Infura access.
+
+## Stage 14.5 RPC budget visibility
+
+Acquisition processes now expose `etl_rpc_attempts_total`, `etl_rpc_retries_total`
+and `etl_rpc_budget_enabled`. Finite clients also expose `etl_rpc_budget_limit`
+and `etl_rpc_budget_remaining`. These fixed series contain no labels/identities,
+URLs or error text. They increment at the HTTP attempt-reservation boundary,
+including failed dispatches; cancellation before reservation or exhausted budgets
+add no attempt. Retries mean subsequent attempts within one RPC call, not worker
+cycles. Values reset on process restart and remain available on database scrape
+failure. A disabled budget omits limit/remaining instead of reporting healthy zero
+headroom. Capture observations while finite processes run; do not invent a final
+count if shutdown precedes scraping. See [final evidence requirements](release-stage14.md).

@@ -79,7 +79,7 @@ func TestAcceptanceDurableOutcomes(t *testing.T) {
 			t.Fatal(got, e)
 		}
 	}
-	for _, failure := range []error{inbound.ErrUnavailable, inbound.ErrConflict, outbound.ErrCommitUnknown, context.DeadlineExceeded} {
+	for _, failure := range []error{inbound.ErrOverloaded, inbound.ErrUnavailable, inbound.ErrConflict, outbound.ErrCommitUnknown, context.DeadlineExceeded} {
 		s := &fakeStore{acceptErr: failure}
 		u, _ := NewAccept("1", 64<<20, s)
 		got, e := u.AcceptTransformedBlock(t.Context(), event(t))

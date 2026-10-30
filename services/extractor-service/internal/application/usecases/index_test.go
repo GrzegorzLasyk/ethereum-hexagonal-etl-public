@@ -519,3 +519,51 @@ func TestActiveReadFailureDoesNotInventMissingAncestry(t *testing.T) {
 		}
 	}
 }
+
+// Exhaustion during acquisition or ancestor verification must not authorize any
+// partial observation, lost Outbox intent, or checkpoint rewind.
+type exhaustedObserver struct {
+	*branchFixture
+	calls int
+	err   error
+}
+
+func (b *exhaustedObserver) Header(ctx context.Context, n uint64) (domain.Header, error) {
+	b.calls++
+	if b.calls == 2 {
+		return domain.Header{}, b.err
+	}
+	return b.branchFixture.Header(ctx, n)
+}
+func TestExecutionBudgetPreservesDurableProgress(t *testing.T) {
+	for _, failure := range []error{outbound.ErrRPCBudgetExceeded, context.DeadlineExceeded} {
+		for _, recovery := range []bool{false, true} {
+			b := newBranch()
+			seed(t, b, 13)
+			cp, retained, pending := *b.cp, len(b.retained), b.capacity.Events
+			var observer outbound.ChainObserver = b
+			if recovery {
+				fork(b, 12)
+				observer = &exhaustedObserver{branchFixture: b, err: failure}
+			} else {
+				b.blockErr = failure
+			}
+			u, err := usecases.NewIndex(opts(), b, observer, b)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = u.Cycle(t.Context()); !errors.Is(err, failure) {
+				t.Fatal(err)
+			}
+			if *b.cp != cp || len(b.retained) != retained || b.capacity.Events != pending || b.rewinds != 0 {
+				t.Fatal("budget changed durable progress/history/outbox")
+			}
+			if !recovery {
+				b.blockErr = nil
+				if r, err := index(t, b, opts()).Cycle(t.Context()); err != nil || r.Processed != 2 || b.cp.Block.Number != 15 {
+					t.Fatal("restart failed", r, err)
+				}
+			}
+		}
+	}
+}

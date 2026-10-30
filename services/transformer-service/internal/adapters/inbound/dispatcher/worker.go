@@ -54,6 +54,9 @@ func (w *Worker) Run(ctx context.Context) {
 						operation = "claim_outbox"
 					}
 					w.metrics.Observe(operation, outcome, time.Since(started))
+					if code == "overloaded" && outcome == "retry" {
+						w.metrics.OverloadRetry()
+					}
 					logevent.Write(ctx, w.logger, logevent.Event{Service: "transformer-service", Operation: "dispatch_outbox", EventID: result.EventID, SourceEventID: result.SourceEventID, Attempt: result.Attempt, Outcome: outcome, ErrorCode: code}, started)
 				}
 				if ctx.Err() != nil {

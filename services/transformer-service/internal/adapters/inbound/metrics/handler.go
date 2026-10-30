@@ -14,7 +14,7 @@ func Handler(reader outbound.StatusReader, registry *shared.Registry) http.Handl
 		if err != nil {
 			return shared.Snapshot{}, err
 		}
-		snapshot := shared.Snapshot{}
+		snapshot := shared.Snapshot{AdmissionUsed: status.AdmissionUsed, AdmissionLimit: status.AdmissionLimit}
 		snapshot.Queues = append(snapshot.Queues, shared.Queue{Kind: "inbox", Pending: status.Inbox.Pending, InFlight: status.Inbox.InFlight, Failed: status.Inbox.Failed, Done: status.Inbox.Done, OldestAge: status.Inbox.OldestAgeSeconds})
 		snapshot.Queues = append(snapshot.Queues, shared.Queue{Kind: "outbox", Pending: status.Outbox.Pending, InFlight: status.Outbox.InFlight, Failed: status.Outbox.Failed, Done: status.Outbox.Done, OldestAge: status.Outbox.OldestAgeSeconds})
 		return snapshot, nil

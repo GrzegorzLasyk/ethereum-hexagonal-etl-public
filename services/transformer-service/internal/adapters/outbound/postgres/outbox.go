@@ -156,7 +156,7 @@ func (s *Outbox) RetryDelivery(ctx context.Context, item outbound.Delivery, f ou
 		return fmt.Errorf("invalid delivery retry delay")
 	}
 	switch f.Code {
-	case "invalid", "conflict", "oversize", "invalid_ack", "unavailable":
+	case "invalid", "conflict", "oversize", "invalid_ack", "unavailable", "overloaded":
 	default:
 		return fmt.Errorf("invalid delivery failure code")
 	}

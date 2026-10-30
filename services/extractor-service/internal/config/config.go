@@ -13,12 +13,13 @@ import (
 
 // Config explicitly selects dispatch, indexing or an operator command.
 type Config struct {
-	LogLevel    slog.Level
-	DatabaseURL string
-	ChainID     domain.ChainID
-	Limits      grpccontract.Limits
-	Dispatch    DispatchConfig
-	Indexing    IndexingConfig
+	PoolConnections int
+	LogLevel        slog.Level
+	DatabaseURL     string
+	ChainID         domain.ChainID
+	Limits          grpccontract.Limits
+	Dispatch        DispatchConfig
+	Indexing        IndexingConfig
 }
 
 func Load() (Config, error) {
@@ -52,6 +53,14 @@ func Load() (Config, error) {
 	}
 	if err := c.Limits.Validate(); err != nil {
 		return c, err
+	}
+	c.PoolConnections = 12
+	if raw := os.Getenv("EXTRACTOR_DB_MAX_CONNECTIONS"); raw != "" {
+		n, e := strconv.Atoi(raw)
+		if e != nil || n < 2 || n > 32 {
+			return c, fmt.Errorf("invalid EXTRACTOR_DB_MAX_CONNECTIONS")
+		}
+		c.PoolConnections = n
 	}
 	var err error
 	c.Dispatch, err = loadDispatch()

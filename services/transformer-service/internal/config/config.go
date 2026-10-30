@@ -10,10 +10,14 @@ import (
 	"time"
 
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/grpccontract"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/application/ports/outbound"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/domain"
 )
 
 type Config struct {
+	AdmissionCapacity                                                                int
+	Resources                                                                        grpccontract.Resources
+	Repair                                                                           *outbound.RepairRequest
 	Dispatch                                                                         DispatchConfig
 	LogLevel                                                                         slog.Level
 	DatabaseURL                                                                      string
@@ -105,8 +109,22 @@ func Load() (Config, error) {
 	if cfg.Lease <= cfg.ProcessTimeout || cfg.MaxBackoff < cfg.InitialBackoff {
 		return Config{}, fmt.Errorf("lease must exceed process timeout; max backoff must cover initial backoff")
 	}
+	cfg.Resources, err = grpccontract.LoadResources("TRANSFORMER", cfg.Limits)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.AdmissionCapacity = 128
+	if text := os.Getenv("TRANSFORMER_MAX_OUTSTANDING_EVENTS"); text != "" {
+		cfg.AdmissionCapacity, err = strconv.Atoi(text)
+	}
+	if err != nil || cfg.AdmissionCapacity < 1 || cfg.AdmissionCapacity > 10000 {
+		return Config{}, fmt.Errorf("invalid TRANSFORMER_MAX_OUTSTANDING_EVENTS")
+	}
 	cfg.Dispatch, err = loadDispatch()
 	if err != nil {
+		return Config{}, err
+	}
+	if cfg.Repair, err = loadRepair(string(cfg.ChainID)); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil

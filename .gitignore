@@ -53,3 +53,6 @@ README-priv.md
 *.dump
 *.backup
 /storage-evidence/
+
+# Private Mainnet execution configuration
+.mainnet/

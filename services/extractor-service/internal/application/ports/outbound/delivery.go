@@ -32,6 +32,7 @@ var (
 	ErrPublishInvalid        = errors.New("publication rejected")
 	ErrPublishConflict       = errors.New("publication content conflict")
 	ErrPublishOversize       = errors.New("publication exceeds transport budget")
+	ErrPublishOverloaded     = errors.New("receiver admission overloaded")
 	ErrPublishUnavailable    = errors.New("publication temporarily unavailable")
 	ErrPublishACK            = errors.New("invalid durable acknowledgement")
 )

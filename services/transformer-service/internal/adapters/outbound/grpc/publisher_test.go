@@ -205,3 +205,15 @@ func TestPublishCancellationInFlight(t *testing.T) {
 		t.Fatal("RPC handler did not observe cancellation")
 	}
 }
+
+func TestPublishReceiverOverloadIsRetryable(t *testing.T) {
+	p := testPublisher(t, func(context.Context, *etlv1.SubmitTransformedBlockRequest) (*etlv1.SubmitTransformedBlockResponse, error) {
+		return nil, grpccontract.Overloaded()
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	err := p.Publish(ctx, publication())
+	if !errors.Is(err, outbound.ErrPublishOverloaded) || !errors.Is(err, outbound.ErrPublishUnavailable) || errors.Is(err, outbound.ErrPublishOversize) {
+		t.Fatal("overload became permanent", err)
+	}
+}
