@@ -31,7 +31,11 @@ run_gate() {
 }
 format_check() {
   local unformatted
-  unformatted=$(rg --files -g '*.go' -g '!bin/**' | xargs gofmt -l)
+  # run_gate invokes this function in an if condition, disabling errexit here.
+  # Check the pipeline explicitly so a tool failure cannot become an empty PASS.
+  if ! unformatted=$(rg --files -0 -g '*.go' -g '!bin/**' | xargs -0 gofmt -l); then
+    return 1
+  fi
   [[ -z "$unformatted" ]] || { printf '%s\n' "$unformatted"; return 1; }
 }
 fixture_digests() {

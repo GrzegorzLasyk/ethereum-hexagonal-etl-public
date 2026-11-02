@@ -1,5 +1,9 @@
 # Stage 13.4A validation — 2026-10-28
 
+This is a historical execution record for Stage 13.4A, not the final tree.
+Stage 13.5 recovery tooling was implemented subsequently; current acceptance
+requirements are in the [Stage 14 release checklist](release-stage14.md).
+
 Scope: the preserved working tree on Go 1.27.3, macOS darwin/amd64 and Docker
 Desktop. Stage 13.1–13.3C changes and private captures were preserved. No Infura or
 other live Ethereum RPC, Mainnet extraction, fixture capture, commit or push ran.

@@ -7,6 +7,11 @@ stage is planned. The next phase is comprehensive validation and review.
 **Implementation complete does not mean production validated.** Earlier execution
 records describe earlier trees and do not certify the final Stage 14 tree.
 
+The [final static review](static-review-stage14.md) records the remaining findings
+and a validation-gate correction. All testing and runtime validation are currently
+postponed until explicit user instruction. Commands below are future execution
+instructions, not evidence that those phases have run.
+
 ## Configuration audit and conservative profiles
 
 | Setting | Current default / rule | Operational interpretation |

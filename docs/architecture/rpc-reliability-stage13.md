@@ -231,6 +231,8 @@ increment; its files and completed implementation were not recreated.
 Remaining limits: no live provider, hosted GitHub Actions or native Apple Silicon
 validation; no provider-account quota or real-response compatibility claim.
 Retries remain bounded per attempt/cycle and by Stage 13.1 process budgets.
-Stages 13.2B–13.5 remain unexecuted/unimplemented beyond the explicitly requested
-preparation of the existing smoke gate. No migration, ADR, protobuf, dependency
+At the end of this Stage 13.2A increment, Stages 13.2B–13.5 remained
+unexecuted/unimplemented beyond preparation of the existing smoke gate. For the
+current implementation and outstanding acceptance, see the [Stage 14 release
+checklist](release-stage14.md). No migration, ADR, protobuf, dependency
 or merged outbound gRPC publisher-test file changed in this increment.

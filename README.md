@@ -2,13 +2,21 @@
 
 An incrementally developed Ethereum ETL system in Go, with independently bounded Extractor, Transformer, and Loader services using Hexagonal Architecture.
 
+**Current status:** Stages 0–14.5 are implemented and scope is frozen. Final
+validation and release approval remain pending; historical stage results do not
+certify the current tree. See the [static review](docs/architecture/static-review-stage14.md)
+and [release checklist](docs/architecture/release-stage14.md). Testing and runtime
+validation will resume only on explicit user instruction.
+
+The stage summaries below describe the increments that introduced each capability.
+
 Stage 1 introduced three executable service skeletons with environment configuration, structured logs, and signal-driven shutdown. All three now run the persistence and handoff workflows described below.
 
 Stage 2 adds local PostgreSQL, isolated service schemas, migration credentials and tooling, and database permission tests.
 
-Stage 3 adds Extractor domain rules, ports, and a single-block extraction use case tested with in-memory fakes. It is not wired into the executable until real adapters are implemented in their planned stages. See [ADR 0002](docs/adr/0002-ethereum-source-data.md) for the source dataset and durable processing boundary.
+Stage 3 added Extractor domain rules, ports, and a single-block extraction use case tested with in-memory fakes. Executable wiring followed in later stages. See [ADR 0002](docs/adr/0002-ethereum-source-data.md) for the source dataset and durable processing boundary.
 
-Stage 4 adds the Extractor's Ethereum JSON-RPC outbound adapter, controlled HTTP tests, and an optional Infura Mainnet smoke test. It returns complete source snapshots through `BlockSource`; the executable still does not run extraction or persist data.
+Stage 4 added the Extractor's Ethereum JSON-RPC outbound adapter, controlled HTTP tests, and an optional Infura Mainnet smoke test. It returns complete source snapshots through `BlockSource`; executable extraction and persistence followed in later stages.
 
 Stage 5 adds Extractor-owned PostgreSQL storage for raw snapshots, outbox intents, and checkpoints through `ExtractionStore`. The source and storage adapters are individually usable; Stage 5 itself adds neither acquisition scheduling nor dispatch; Stage 9 wires the dispatcher below.
 
@@ -58,7 +66,10 @@ isolation and remaining limitations. Stage 13.2A adds [offline RPC reliability](
 The user reports Stage 13.2B smoke PASS (block 1000000, two transactions, two
 receipts, five requests). Stage 13.3A prepares [Mainnet fixture selection and bounded capture](docs/architecture/mainnet-fixtures-stage13.md):
 versioned metadata, explicit gaps, raw-byte integrity and offline validation.
-No real fixture has been captured; Stages 13.3B–13.5 remain pending.
+Three authentic captures are held in private local storage. Stage 13.3C offline
+ETL regression, Stage 13.4 bounded E2E tooling and Stage 13.5 audited recovery are
+implemented; final acceptance remains pending. Captures are not distributed with
+the repository and are not required by ordinary unit tests or CI.
 
 Stage 13.3B [offline preflight and ordered capture commands](docs/architecture/mainnet-capture-stage13.md)
 are prepared. Use `fixture-capture verify MANIFEST CASE ARTIFACT` to validate
