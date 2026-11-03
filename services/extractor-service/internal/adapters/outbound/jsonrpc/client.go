@@ -14,9 +14,11 @@ import (
 	"net/url"
 	"regexp"
 	"strconv"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/metrics"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/application/ports/outbound"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
@@ -29,14 +31,17 @@ var (
 	ErrSnapshotTooLarge = errors.New("raw block snapshot size limit exceeded")
 )
 
-// Config has no implicit network or resource-budget defaults. MaxAttempts includes
+// Config has no implicit network or resource-budget defaults.
+// ReceiptConcurrency zero preserves the conservative single-worker default. MaxAttempts includes
 // the first request. URL is secret-bearing and must never be logged.
 type Config struct {
+	ReceiptConcurrency int // 1..8; zero means DefaultReceiptConcurrency.
 	URL                string
 	ChainID            domain.ChainID
 	Provider           string
 	RequestTimeout     time.Duration
 	MaxAttempts        int
+	MaxRequests        uint64 // Total HTTP attempts per client/run; zero preserves unbounded local operation.
 	InitialBackoff     time.Duration
 	MaxBackoff         time.Duration
 	MinRequestInterval time.Duration
@@ -57,13 +62,21 @@ type Client struct {
 	config      Config
 	http        *http.Client
 	id          atomic.Uint64
-	gate        chan struct{}
+	requests    atomic.Uint64
+	gate        sync.Mutex
+	metrics     *metrics.Registry
 	nextRequest time.Time // protected by gate
 }
 
 var _ outbound.BlockSource = (*Client)(nil)
 
-func New(config Config, client *http.Client) (*Client, error) {
+func New(config Config, client *http.Client, registries ...*metrics.Registry) (*Client, error) {
+	if config.ReceiptConcurrency == 0 {
+		config.ReceiptConcurrency = DefaultReceiptConcurrency
+	}
+	if config.ReceiptConcurrency < 1 || config.ReceiptConcurrency > MaxReceiptConcurrency {
+		return nil, fmt.Errorf("%w: receipt concurrency must be 1..8", ErrConfig)
+	}
 	u, err := url.Parse(config.URL)
 	if err != nil || u == nil || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
 		return nil, fmt.Errorf("%w: URL must be an absolute endpoint without userinfo or fragment", ErrConfig)
@@ -93,7 +106,18 @@ func New(config Config, client *http.Client) (*Client, error) {
 	}
 	// Never forward a credential-bearing endpoint to a redirect target.
 	h.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	return &Client{config: config, http: &h, gate: make(chan struct{}, 1)}, nil
+	var registry *metrics.Registry
+	if len(registries) > 0 {
+		registry = registries[0]
+	}
+	c := &Client{config: config, http: &h, metrics: registry}
+	registry.ConfigureRPC(config.MaxRequests)
+	transport := h.Transport
+	if transport == nil {
+		transport = http.DefaultTransport
+	}
+	h.Transport = attemptTransport{client: c, next: transport}
+	return c, nil
 }
 
 func (c *Client) ChainID(ctx context.Context) (domain.ChainID, error) {
@@ -126,38 +150,8 @@ func (c *Client) Block(ctx context.Context, number uint64) (domain.Extraction, e
 	if err != nil {
 		return empty, err
 	}
-	total := int64(len(raw))
-	var cumulative uint64
-	for i, tx := range txs {
-		if err := ctx.Err(); err != nil {
-			return empty, err
-		}
-		receiptRaw, err := c.call(ctx, "eth_getTransactionReceipt", []any{fmt.Sprintf("0x%x", tx.meta.Hash)})
-		if err != nil {
-			return empty, fmt.Errorf("fetch receipt %d: %w", i, err)
-		}
-		if int64(len(receiptRaw)) > c.config.MaxSnapshotBytes-total {
-			return empty, ErrSnapshotTooLarge
-		}
-		total += int64(len(receiptRaw))
-		receipt, used, err := decodeReceipt(receiptRaw, extraction.Header, tx)
-		if err != nil {
-			return empty, fmt.Errorf("receipt %d: %w", i, err)
-		}
-		if used > math.MaxUint64-cumulative {
-			return empty, invalid("cumulativeGasUsed")
-		}
-		cumulative += used
-		o, _ := objectOf(receiptRaw)
-		reported, _ := uintField(o, "cumulativeGasUsed")
-		if cumulative != reported {
-			return empty, invalid("cumulativeGasUsed")
-		}
-		extraction.Receipts = append(extraction.Receipts, receipt)
-		extraction.RawReceipts = append(extraction.RawReceipts, receiptRaw)
-	}
-	if cumulative != gasUsed {
-		return empty, invalid("gasUsed")
+	if err := c.fetchReceipts(ctx, &extraction, txs, gasUsed); err != nil {
+		return empty, err
 	}
 	// Detect endpoint chain changes across a multi-request snapshot.
 	if _, err := c.ChainID(ctx); err != nil {
@@ -191,18 +185,41 @@ func wait(ctx context.Context, delay time.Duration) error {
 	}
 }
 
+// Pacing is shared by all RPC methods and retries. Never hold the gate while
+// waiting: responses must be able to extend a global Retry-After cooldown.
 func (c *Client) pace(ctx context.Context) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case c.gate <- struct{}{}:
+	for {
+		c.gate.Lock()
+		if err := ctx.Err(); err != nil {
+			c.gate.Unlock()
+			return err
+		}
+		if c.config.MaxRequests > 0 && c.Requests() >= c.config.MaxRequests {
+			c.gate.Unlock()
+			return outbound.ErrRPCBudgetExceeded
+		}
+		delay := time.Until(c.nextRequest)
+		if delay <= 0 {
+			c.nextRequest = time.Now().Add(c.config.MinRequestInterval)
+			c.gate.Unlock()
+			return nil
+		}
+		c.gate.Unlock()
+		if err := wait(ctx, delay); err != nil {
+			return err
+		}
 	}
-	defer func() { <-c.gate }()
-	if err := wait(ctx, time.Until(c.nextRequest)); err != nil {
-		return err
+}
+func (c *Client) cooldown(delay time.Duration) {
+	if delay <= 0 {
+		return
 	}
-	c.nextRequest = time.Now().Add(c.config.MinRequestInterval)
-	return nil
+	c.gate.Lock()
+	defer c.gate.Unlock()
+	until := time.Now().Add(delay)
+	if until.After(c.nextRequest) {
+		c.nextRequest = until
+	}
 }
 
 func (c *Client) call(ctx context.Context, method string, params []any) (json.RawMessage, error) {
@@ -221,15 +238,25 @@ func (c *Client) call(ctx context.Context, method string, params []any) (json.Ra
 		if err := c.pace(ctx); err != nil {
 			return nil, err
 		}
-		raw, retry, retryAfter, err := c.attempt(ctx, payload, id)
+		attemptContext := ctx
+		if attempt > 1 {
+			attemptContext = context.WithValue(ctx, rpcRetryKey{}, true)
+		}
+		raw, retry, retryAfter, err := c.attempt(attemptContext, payload, id)
+		if retry {
+			c.cooldown(retryAfter)
+		}
 		if err == nil {
 			return raw, nil
 		}
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
+		if c.config.MaxRequests > 0 && c.Requests() >= c.config.MaxRequests {
+			return nil, errors.Join(err, outbound.ErrRPCBudgetExceeded)
+		}
 		if !retry || attempt >= c.config.MaxAttempts || retryAfter > c.config.MaxBackoff {
-			if retryAfter > 0 {
+			if retry && retryAfter > 0 {
 				err = errors.Join(err, fmt.Errorf("%w: wait at least %s", outbound.ErrRetryDeferred, retryAfter))
 			}
 			return nil, fmt.Errorf("%s after %d attempt(s): %w", method, attempt, err)
@@ -252,6 +279,9 @@ func (c *Client) call(ctx context.Context, method string, params []any) (json.Ra
 }
 
 func safeTransportError(ctx context.Context, err error) error {
+	if errors.Is(err, outbound.ErrRPCBudgetExceeded) {
+		return outbound.ErrRPCBudgetExceeded
+	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -273,11 +303,29 @@ func (c *Client) attempt(parent context.Context, payload []byte, id uint64) (jso
 		return nil, false, 0, ErrConfig
 	}
 	req.Header.Set("Content-Type", "application/json")
+	// Check cancellation before handing off to HTTP. The transport wrapper counts
+	// an attempt only when RoundTrip is invoked, including failed transport attempts.
+	if err := ctx.Err(); err != nil {
+		return nil, false, 0, err
+	}
 	response, err := c.http.Do(req)
 	if err != nil {
 		return nil, true, 0, safeTransportError(ctx, err)
 	}
 	defer response.Body.Close()
+	// Classify status before reading an untrusted error body. A stalled or
+	// oversized 401/402/403 body must not turn a permanent rejection into retry.
+	after := retryDelay(response.Header.Get("Retry-After"), time.Now())
+	if response.StatusCode != http.StatusOK {
+		retry := response.StatusCode == 408 || response.StatusCode == 429 ||
+			response.StatusCode == 500 || response.StatusCode == 502 ||
+			response.StatusCode == 503 || response.StatusCode == 504
+		err := error(&HTTPError{Status: response.StatusCode})
+		if !retry {
+			err = errors.Join(outbound.ErrSourcePermanent, err)
+		}
+		return nil, retry, after, err
+	}
 	body, err := io.ReadAll(io.LimitReader(response.Body, c.config.MaxResponseBytes+1))
 	if int64(len(body)) > c.config.MaxResponseBytes {
 		return nil, false, 0, ErrResponseTooLarge
@@ -287,13 +335,6 @@ func (c *Client) attempt(parent context.Context, payload []byte, id uint64) (jso
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, true, 0, err
-	}
-	after := retryDelay(response.Header.Get("Retry-After"), time.Now())
-	if response.StatusCode != http.StatusOK {
-		retry := response.StatusCode == 408 || response.StatusCode == 429 ||
-			response.StatusCode == 500 || response.StatusCode == 502 ||
-			response.StatusCode == 503 || response.StatusCode == 504
-		return nil, retry, after, &HTTPError{Status: response.StatusCode}
 	}
 	envelope, err := uniqueObject(body)
 	if err != nil {
@@ -321,7 +362,12 @@ func (c *Client) attempt(parent context.Context, payload []byte, id uint64) (jso
 			json.Unmarshal(e["message"], &message) != nil || bytes.Equal(e["message"], []byte("null")) {
 			return nil, false, 0, ErrProtocol
 		}
-		return nil, code == 429 || code == -32005, after, &RPCError{Code: code}
+		retry := code == 429 || code == -32005
+		err = &RPCError{Code: code}
+		if !retry {
+			err = errors.Join(outbound.ErrSourcePermanent, err)
+		}
+		return nil, retry, after, err
 	}
 	if bytes.Equal(bytes.TrimSpace(result), []byte("null")) {
 		return nil, false, 0, domain.ErrUnavailable
@@ -340,4 +386,43 @@ func retryDelay(value string, now time.Time) time.Duration {
 		return when.Sub(now)
 	}
 	return 0
+}
+
+// Requests returns attempted HTTP dispatches, including retries and failures.
+// It is process-local, not a provider billing or wire-delivery counter.
+func (c *Client) Requests() uint64 { return c.requests.Load() }
+
+type rpcRetryKey struct{}
+
+func (c *Client) reserveRequest(ctx context.Context) error {
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		n := c.requests.Load()
+		if c.config.MaxRequests > 0 && n >= c.config.MaxRequests {
+			return outbound.ErrRPCBudgetExceeded
+		}
+		if c.requests.CompareAndSwap(n, n+1) {
+			retry, _ := ctx.Value(rpcRetryKey{}).(bool)
+			c.metrics.RPCAttempt(retry)
+			return nil
+		}
+	}
+}
+
+// attemptTransport is the accounting boundary: canceled requests rejected by
+// net/http before RoundTrip consume no budget. Once reserved, dispatch is an
+// in-flight attempt and is never refunded, even if cancellation races with it.
+// Never hold a client mutex across the underlying HTTP exchange.
+type attemptTransport struct {
+	client *Client
+	next   http.RoundTripper
+}
+
+func (t attemptTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if err := t.client.reserveRequest(r.Context()); err != nil {
+		return nil, err
+	}
+	return t.next.RoundTrip(r)
 }

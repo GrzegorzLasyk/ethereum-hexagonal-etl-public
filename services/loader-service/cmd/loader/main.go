@@ -10,6 +10,8 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/baseline"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/grpccontract"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/health"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/metrics"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/logevent"
@@ -45,18 +47,30 @@ func main() {
 // run is the composition root: all workflow decisions live in use cases.
 func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	started := time.Now()
+	if cfg.Repair != nil {
+		limited, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		ctx = limited
+	}
 	pc, err := pgxpool.ParseConfig(cfg.DatabaseURL)
 	if err != nil {
 		return errors.New("invalid database configuration")
 	}
-	pc.MaxConns = int32(cfg.Workers + 4)
+	pc.MaxConns = int32(cfg.Resources.PoolConnections)
 	pc.ConnConfig.ConnectTimeout = 5 * time.Second
 	pc.ConnConfig.RuntimeParams["statement_timeout"] = "10000"
+	probe, err := baseline.Configure(pc)
+	if err != nil {
+		return err
+	}
+	defer probe.Close()
 	pool, err := pgxpool.NewWithConfig(ctx, pc)
 	if err != nil {
 		return errors.New("cannot create database pool")
 	}
 	defer pool.Close()
+	probe.Attach(pool)
+	defer probe.Close()
 	startup, cancel := context.WithTimeout(ctx, 10*time.Second)
 	var role, db string
 	err = pool.QueryRow(startup, "SELECT current_user,current_database()").Scan(&role, &db)
@@ -65,8 +79,18 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 		return errors.New("database requires loader_runtime in ethereum_etl")
 	}
 	registry := metrics.New("process_inbox", "claim_inbox", "persist_block")
-	store, err := postgres.New(pool, cfg.ChainID, cfg.Lease, cfg.MaxAttempts)
+	store, err := postgres.NewWithBatchSize(pool, cfg.ChainID, cfg.Lease, cfg.MaxAttempts, cfg.AdmissionCapacity, cfg.SQLBatchSize)
 	if err != nil {
+		return err
+	}
+	if cfg.Repair != nil {
+		err := usecases.Repair(ctx, string(cfg.ChainID), store, *cfg.Repair)
+		outcome, code := "requeued", ""
+		if err != nil {
+			outcome = "failed"
+			code = logging.ErrorCode(err)
+		}
+		logevent.Write(ctx, logger, logevent.Event{Service: "loader-service", Operation: "repair_" + cfg.Repair.Queue, EventID: cfg.Repair.EventID, ChainID: string(cfg.ChainID), Outcome: outcome, ErrorCode: code}, started)
 		return err
 	}
 	accept, err := usecases.NewAccept(cfg.ChainID, cfg.Limits.PayloadBytes, store)
@@ -81,7 +105,11 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	server, err := receiver.NewServer(string(cfg.ChainID), cfg.Limits, accept, logger)
+	gate, err := grpccontract.NewAdmission(cfg.Resources, cfg.Limits, registry)
+	if err != nil {
+		return err
+	}
+	server, err := receiver.NewServerWithAdmission(string(cfg.ChainID), cfg.Limits, accept, gate, logger)
 	if err != nil {
 		return err
 	}
@@ -89,6 +117,7 @@ func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	if err != nil {
 		return errors.New("cannot open gRPC listener")
 	}
+	listener = gate.LimitListener(listener)
 	defer listener.Close()
 	closeHealth, err := health.Start(ctx, os.Getenv("LOADER_HEALTH_ADDRESS"), store.CheckReadiness, servicemetrics.Handler(store, registry))
 	if err != nil {

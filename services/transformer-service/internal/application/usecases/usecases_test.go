@@ -84,7 +84,7 @@ func TestAcceptanceCommitAndFailures(t *testing.T) {
 			t.Fatal(got, err)
 		}
 	}
-	for _, failure := range []error{inbound.ErrConflict, inbound.ErrUnavailable, outbound.ErrCommitUnknown, context.DeadlineExceeded} {
+	for _, failure := range []error{inbound.ErrOverloaded, inbound.ErrConflict, inbound.ErrUnavailable, outbound.ErrCommitUnknown, context.DeadlineExceeded} {
 		s := &fakeStore{acceptErr: failure}
 		a, _ := NewAccept("1", 64<<20, s)
 		got, err := a.AcceptRawBlock(t.Context(), event(t))

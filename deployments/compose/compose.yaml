@@ -19,6 +19,9 @@ x-connection: &connection
 
 services:
   postgres:
+    cpus: ${POSTGRES_CPUS:-2.0}
+    mem_limit: ${POSTGRES_MEM_LIMIT:-2g}
+    memswap_limit: ${POSTGRES_MEM_LIMIT:-2g}
     image: postgres:17.11-bookworm
     environment:
       POSTGRES_DB: ethereum_etl

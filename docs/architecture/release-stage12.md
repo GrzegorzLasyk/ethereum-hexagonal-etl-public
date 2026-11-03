@@ -1,5 +1,9 @@
 # MVP release readiness (Stage 12.5)
 
+The final project checklist and validation entry point are now
+[Stage 14.5](release-stage14.md). This Stage 12 document retains the security and
+storage review; historical execution evidence does not certify the final tree.
+
 ## Release boundary
 
 The deliverable is a reproducible **local educational MVP** on a trusted host.
@@ -49,19 +53,19 @@ pass. This task does not tag, commit, push, deploy or publish an image.
 | Readiness metadata | Only owning-schema version/checksum view; bounded catalog checks; no error detail in HTTP. | Not a full adversarial schema audit. No automatic migration or repair. |
 | Secret handling | Random 0600 test configs, private environment URLs, redacted application logs; no payloads/receipts/DSNs in structured events. | Environment secrets are visible to privileged host/container inspectors. No automatic rotation, KMS or encrypted local backup. Do not publish Compose config/env output. |
 | Network | Health and gRPC restricted to loopback; fixture shares network namespace; published PostgreSQL/RPC ports bind host loopback. | gRPC and fixture controls are unauthenticated plaintext. PostgreSQL connections use `sslmode=disable`. Trusted local processes/containers are inside this boundary. Remote or multi-tenant exposure is not approved. |
-| Container execution | Application UID 65532, read-only root, capabilities dropped and no-new-privileges. | No cgroup CPU/memory quotas or host isolation guarantee. PostgreSQL necessarily writes its volume. Fixture control/ACK proxy is test-only, never a production endpoint. |
+| Container execution | Application UID 65532, read-only root, capabilities dropped and no-new-privileges. | Stage 14 Compose CPU/memory quotas and Go soft memory targets apply; they do not establish host isolation or measured sizing. PostgreSQL necessarily writes its volume. Fixture control/ACK proxy is test-only, never a production endpoint. |
 | Supply chain | Go sums, pinned Go/protobuf tools, CI actions pinned by commit, explicit PostgreSQL tag. | Container tags are not immutable digests; base Debian tag changes. No signed release/SBOM or vulnerability-scan evidence in this task. Review and pin release artifacts separately. |
 | CI | PR/main quality + mandatory integrations, read-only contents permission, no deployment/publish step. | Hosted execution, protected branches and required-check enforcement are GitHub configuration and were not verified locally. Fork secrets must never be needed. |
 | Availability | Bounded retries, durable Inbox/Outbox, lease fencing, explicit unknown commits and local atomic transactions. | One PostgreSQL instance is a shared failure domain; no HA/PITR, remote backup scheduler or defined production RPO/RTO. |
 | Storage | All source/candidate/event history retained; verified logical backup and measured queries. | Unlimited retention consumes disk; metrics aggregates scan growing history. Small synthetic measurements do not establish Mainnet capacity. |
 | Data trust | Explicit chain, complete source membership checks, separate receipts, immutable identities and bounded provider-relative recovery. | Provider trust, cryptographic validation, consensus finality and downstream canonical reconciliation are not implemented. Confirmation depth does not establish finality. |
-| Failed work | Safe codes, retained evidence, automatic bounded transient retries, audited Extractor replay. | Transformer Inbox/Outbox and Loader Inbox lack an audited manual reset tool. A reviewed repair remains necessary after exhausted/permanent failures. |
+| Failed work | Safe codes, retained evidence, automatic bounded transient retries, audited Extractor replay. | Stage 13 provides audited finite repair for Transformer Inbox/Outbox and Loader Inbox. Fix the cause first; restart/upstream replay alone cannot replenish exhausted budgets. |
 
 ## Production blockers requiring a separate decision
 
 Before any remote/unattended deployment, assign owners and approve transport
 authentication/TLS and network isolation; secrets/rotation; resource sizing and
-disk alerts; backup cadence/off-site encryption/PITR and measured RPO/RTO; audited
+disk alerts; backup cadence/off-site encryption/PITR and measured RPO/RTO; reviewed use of existing audited
 failed-work recovery; immutable builds, dependency review and hosted CI enforcement.
 Define operational on-call/incident ownership and restore drills. None is silently
 added by the local MVP checklist.

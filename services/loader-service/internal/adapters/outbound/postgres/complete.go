@@ -50,22 +50,26 @@ func (s *Store) Complete(ctx context.Context, item outbound.Item, doc domain.Doc
 		return outbound.ErrLeaseLost
 	}
 	snap := doc.Snapshot
-	if err = insertBlock(ctx, tx, snap.ChainID, snap.Block, item.Event.EventID); err != nil {
+	writes := &recordBatch{tx: tx, limit: s.batchSize}
+	if err = insertBlock(ctx, writes, snap.ChainID, snap.Block, item.Event.EventID); err != nil {
 		return err
 	}
 	for i, transaction := range snap.Transactions {
-		if err = insertTransaction(ctx, tx, snap.ChainID, transaction); err != nil {
+		if err = insertTransaction(ctx, writes, snap.ChainID, transaction); err != nil {
 			return err
 		}
 		receipt := snap.Receipts[i]
-		if err = insertReceipt(ctx, tx, snap.ChainID, receipt); err != nil {
+		if err = insertReceipt(ctx, writes, snap.ChainID, receipt); err != nil {
 			return err
 		}
 		for _, log := range receipt.Logs {
-			if err = insertLog(ctx, tx, snap.ChainID, log); err != nil {
+			if err = insertLog(ctx, writes, snap.ChainID, log); err != nil {
 				return err
 			}
 		}
+	}
+	if err = writes.flush(ctx); err != nil {
+		return dbError(err)
 	}
 	if err = updateObservations(ctx, tx, snap.ChainID, snap.Block); err != nil {
 		return err

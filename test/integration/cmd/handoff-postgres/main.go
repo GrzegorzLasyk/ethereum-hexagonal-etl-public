@@ -30,6 +30,7 @@ var passwordNames = []string{
 
 type command struct {
 	phase, program, root string
+	expected             string
 	args, env, secrets   []string
 }
 
@@ -43,8 +44,14 @@ func main() {
 }
 
 func start(ctx context.Context) error {
+	if len(os.Args) > 1 && os.Args[1] == "--baseline" {
+		return startBaseline(ctx, os.Args[2:])
+	}
+	if len(os.Args) == 3 && os.Args[1] == "--mainnet-fixtures" {
+		return startReal(ctx, os.Args[2])
+	}
 	if len(os.Args) != 1 {
-		return errors.New("usage: handoff-postgres (run from repository root)")
+		return errors.New("usage: handoff-postgres [--mainnet-fixtures DIRECTORY] (run from repository root)")
 	}
 	root, err := os.Getwd()
 	if err != nil {
@@ -80,7 +87,7 @@ func isolatedEnvironment(parent []string) []string {
 	for _, entry := range parent {
 		name, _, _ := strings.Cut(entry, "=")
 		if strings.HasPrefix(name, "COMPOSE_") || strings.HasPrefix(name, "PG") ||
-			strings.HasPrefix(name, "POSTGRES_") || strings.HasPrefix(name, "LOADER_") || strings.HasPrefix(name, "TRANSFORMER_") || strings.HasPrefix(name, "EXTRACTOR_") || strings.HasPrefix(name, "HANDOFF_") {
+			strings.HasPrefix(name, "POSTGRES_") || strings.HasPrefix(name, "LOADER_") || strings.HasPrefix(name, "TRANSFORMER_") || strings.HasPrefix(name, "EXTRACTOR_") || strings.HasPrefix(name, "HANDOFF_") || strings.HasPrefix(name, "ETHEREUM_") || strings.HasPrefix(name, "REAL_FIXTURE_") || strings.HasPrefix(name, "ETL_BASELINE_") {
 			continue
 		}
 		secret := false
@@ -98,11 +105,26 @@ func isolatedEnvironment(parent []string) []string {
 }
 
 func run(ctx context.Context, root string, parent []string, port int, invoke func(context.Context, command) error) (result error) {
+	return runCase(ctx, root, parent, port, invoke, nil)
+}
+
+func runCase(ctx context.Context, root string, parent []string, port int, invoke func(context.Context, command) error, fixture *realCase, baselineSpecs ...*baselineRun) (result error) {
+	var baseline *baselineRun
+	if len(baselineSpecs) > 0 {
+		baseline = baselineSpecs[0]
+	}
 	id, err := randomHex(12)
 	if err != nil {
 		return err
 	}
 	project := "ethereum-stage9-" + id
+	if fixture != nil {
+		project = "ethereum-stage13c-" + id
+		parent = append(append([]string{}, parent...), "ETL_TEST_RETAIN=1")
+	}
+	if baseline != nil {
+		project = "ethereum-stage14-" + id
+	}
 	passwords := make(map[string]string, len(passwordNames))
 	var secrets []string
 	var content strings.Builder
@@ -165,6 +187,15 @@ func run(ctx context.Context, root string, parent []string, port int, invoke fun
 		{docker("start PostgreSQL", "up", "-d", "--wait", "--wait-timeout", "120", "postgres"), 3 * time.Minute},
 		{docker("verify migrations and permissions", "run", "--rm", "verify"), 3 * time.Minute},
 	}
+	if baseline != nil {
+		steps = steps[:2]
+		for _, service := range []string{"extractor", "transformer", "loader"} {
+			steps = append(steps, struct {
+				cmd     command
+				timeout time.Duration
+			}{docker("apply "+service+" migrations", "run", "--rm", "migrate-"+service), 3 * time.Minute})
+		}
+	}
 	for _, step := range steps {
 		limited, cancel := context.WithTimeout(ctx, step.timeout)
 		err := invoke(limited, step.cmd)
@@ -175,6 +206,11 @@ func run(ctx context.Context, root string, parent []string, port int, invoke fun
 	}
 	testEnv := append([]string{}, env...)
 	testEnv = append(testEnv, "HANDOFF_TEST_ISOLATED=1")
+	seedPattern := "^TestSeedHandoff$"
+	if fixture != nil {
+		seedPattern = "^TestSeedRealFixture$"
+		testEnv = append(testEnv, "REAL_FIXTURE_ARTIFACT="+fixture.path, "REAL_FIXTURE_CASE="+fixture.id, "REAL_FIXTURE_MANIFEST="+fixture.manifest, "REAL_FIXTURE_SHA256="+fixture.digest)
+	}
 	for _, service := range []string{"EXTRACTOR", "TRANSFORMER", "LOADER"} {
 		testEnv = append(testEnv, service+"_TEST_ISOLATED=1")
 		for _, role := range []string{"RUNTIME", "MIGRATOR"} {
@@ -187,12 +223,18 @@ func run(ctx context.Context, root string, parent []string, port int, invoke fun
 			secrets = append([]string{url}, secrets...)
 		}
 	}
+	if baseline != nil {
+		testEnv = append(testEnv, "ETL_BASELINE_OPT_IN=1", "ETL_BASELINE_SCENARIO="+baseline.specPath)
+		limited, cancel := context.WithTimeout(ctx, 7*time.Minute)
+		defer cancel()
+		return invoke(limited, command{phase: "offline performance baseline", program: baseline.testBinary, root: filepath.Join(root, "test/integration/handoff"), env: testEnv, secrets: secrets, expected: "TestPerformanceBaseline", args: []string{"-test.run=^TestPerformanceBaseline$", "-test.count=1", "-test.timeout=6m", "-test.v"}})
+	}
 	for _, step := range []struct{ phase, pattern, pkg string }{
-		{"seed deterministic extraction", "^TestSeedHandoff$", "./services/extractor-service/internal/adapters/outbound/postgres"},
+		{"seed deterministic extraction", seedPattern, "./services/extractor-service/internal/adapters/outbound/postgres"},
 		{"end-to-end handoff tests", "^TestHandoff$", "./test/integration/handoff"},
 	} {
 		testCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
-		err := invoke(testCtx, command{phase: step.phase, program: "go", root: root, env: testEnv, secrets: secrets, args: []string{"test", "-tags", "postgresintegration", "-race", "-run", step.pattern, "-count=1", "-timeout=4m", "-v", step.pkg}})
+		err := invoke(testCtx, command{phase: step.phase, program: "go", root: root, env: testEnv, secrets: secrets, expected: strings.Trim(step.pattern, "^$"), args: []string{"test", "-tags", "postgresintegration", "-race", "-run", step.pattern, "-count=1", "-timeout=4m", "-v", step.pkg}})
 		cancel()
 		if err != nil {
 			return err
@@ -244,6 +286,9 @@ func execute(ctx context.Context, c command) error {
 	err := cmd.Run()
 	fmt.Fprint(os.Stdout, output.safe(c.secrets))
 	if err == nil {
+		if c.expected != "" && (output.overflow || strings.Contains(output.buffer.String(), "--- SKIP:") || !strings.Contains(output.buffer.String(), "--- PASS: "+c.expected+" (")) {
+			return errors.New(c.phase + ": missing PASS or skipped integration test")
+		}
 		return nil
 	}
 	if ctx.Err() != nil {

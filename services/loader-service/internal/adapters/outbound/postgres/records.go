@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/domain"
-	"github.com/jackc/pgx/v5"
 	"strconv"
 )
 
@@ -44,7 +43,7 @@ func authorizationJSON(values []domain.Authorization) (string, error) {
 	return string(b), err
 }
 
-func insertBlock(ctx context.Context, tx pgx.Tx, chain domain.ChainID, v domain.Block, eventID string) error {
+func insertBlock(ctx context.Context, tx recordExecutor, chain domain.ChainID, v domain.Block, eventID string) error {
 
 	present := []string{}
 	if v.TotalDifficulty.Present {
@@ -100,7 +99,7 @@ func insertBlock(ctx context.Context, tx pgx.Tx, chain domain.ChainID, v domain.
 	return dbErrorOrNil(err)
 }
 
-func insertTransaction(ctx context.Context, tx pgx.Tx, chain domain.ChainID, v domain.Transaction) error {
+func insertTransaction(ctx context.Context, tx recordExecutor, chain domain.ChainID, v domain.Transaction) error {
 
 	present := []string{}
 	if v.To.Present {
@@ -184,7 +183,7 @@ func insertTransaction(ctx context.Context, tx pgx.Tx, chain domain.ChainID, v d
 	return dbErrorOrNil(err)
 }
 
-func insertReceipt(ctx context.Context, tx pgx.Tx, chain domain.ChainID, v domain.Receipt) error {
+func insertReceipt(ctx context.Context, tx recordExecutor, chain domain.ChainID, v domain.Receipt) error {
 
 	present := []string{}
 	if v.To.Present {
@@ -233,7 +232,7 @@ func insertReceipt(ctx context.Context, tx pgx.Tx, chain domain.ChainID, v domai
 	return dbErrorOrNil(err)
 }
 
-func insertLog(ctx context.Context, tx pgx.Tx, chain domain.ChainID, v domain.Log) error {
+func insertLog(ctx context.Context, tx recordExecutor, chain domain.ChainID, v domain.Log) error {
 
 	present := []string{}
 	if v.Removed.Present {

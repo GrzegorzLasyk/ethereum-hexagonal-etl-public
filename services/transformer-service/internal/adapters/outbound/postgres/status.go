@@ -30,5 +30,10 @@ func (s *Store) ReadStatus(ctx context.Context) (outbound.Status, error) {
 	if err != nil {
 		return outbound.Status{}, err
 	}
+	result.AdmissionLimit = int64(s.capacity)
+	err = tx.QueryRow(ctx, `SELECT (SELECT count(*) FROM transformer.inbox_events WHERE status<>'completed') + (SELECT count(*) FROM transformer.outbox_events WHERE status<>'delivered')`).Scan(&result.AdmissionUsed)
+	if err != nil {
+		return outbound.Status{}, err
+	}
 	return result, nil
 }

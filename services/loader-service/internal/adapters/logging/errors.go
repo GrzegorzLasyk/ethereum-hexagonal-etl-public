@@ -16,7 +16,9 @@ func ErrorCode(err error) string {
 		code string
 	}{
 		{outbound.ErrCommitUnknown, "commit_unknown"},
+		{outbound.ErrRepairRefused, "repair_refused"},
 		{outbound.ErrLeaseLost, "lease_lost"},
+		{inbound.ErrOverloaded, "overloaded"},
 		{inbound.ErrUnavailable, "unavailable"},
 		{inbound.ErrInvalidEvent, "invalid"},
 		{inbound.ErrUnsupportedVersion, "unsupported"},

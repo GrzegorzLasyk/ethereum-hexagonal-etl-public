@@ -20,7 +20,7 @@ func TestWorkerBoundedFailureAndRecoveryHalt(t *testing.T) {
 	for _, tc := range []struct {
 		err  error
 		want int
-	}{{errors.New("source unavailable"), 3}, {domain.ErrRecoveryRequired, 1}, {outbound.ErrRetryDeferred, 1}} {
+	}{{errors.New("source unavailable"), 3}, {domain.ErrRecoveryRequired, 1}, {outbound.ErrRetryDeferred, 1}, {outbound.ErrRPCBudgetExceeded, 1}, {outbound.ErrSourcePermanent, 1}, {domain.ErrChainMismatch, 1}} {
 		calls := 0
 		w, err := New(cycleFunc(func(context.Context) (inbound.IndexResult, error) { calls++; return inbound.IndexResult{}, tc.err }), slog.New(slog.NewTextHandler(io.Discard, nil)), time.Millisecond, time.Second, 3)
 		if err != nil {

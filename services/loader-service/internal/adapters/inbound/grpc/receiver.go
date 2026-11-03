@@ -47,6 +47,17 @@ func NewReceiver(chainID string, limits grpccontract.Limits, acceptor inbound.Tr
 // NewServer registers the receiver and applies matching send/receive bounds.
 // It opens no listener. Composition roots own serving and graceful shutdown.
 func NewServer(chainID string, limits grpccontract.Limits, acceptor inbound.TransformedBlockAcceptor, loggers ...*slog.Logger) (*grpcgo.Server, error) {
+	gate, err := grpccontract.NewAdmission(grpccontract.DefaultResources(limits), limits, nil)
+	if err != nil {
+		return nil, err
+	}
+	return NewServerWithAdmission(chainID, limits, acceptor, gate, loggers...)
+}
+
+func NewServerWithAdmission(chainID string, limits grpccontract.Limits, acceptor inbound.TransformedBlockAcceptor, gate *grpccontract.Admission, loggers ...*slog.Logger) (*grpcgo.Server, error) {
+	if gate == nil {
+		return nil, fmt.Errorf("admission gate required")
+	}
 	receiver, err := NewReceiver(chainID, limits, acceptor, loggers...)
 	if err != nil {
 		return nil, err
@@ -55,8 +66,9 @@ func NewServer(chainID string, limits grpccontract.Limits, acceptor inbound.Tran
 	if err != nil {
 		return nil, err
 	}
+	options = append(options, gate.ServerOptions()...)
 	server := grpcgo.NewServer(options...)
-	etlv1.RegisterLoaderServiceServer(server, receiver)
+	gate.Register(server, &etlv1.LoaderService_ServiceDesc, receiver)
 	return server, nil
 }
 
@@ -69,6 +81,9 @@ func (r *Receiver) SubmitTransformedBlock(ctx context.Context, req *etlv1.Submit
 				event.ErrorCode = transportErrorCode(returnedErr)
 			}
 			event.Outcome = logevent.FailureOutcome(event.ErrorCode)
+			if event.ErrorCode == "overloaded" {
+				event.Outcome = "backpressure"
+			}
 		}
 		logevent.Write(ctx, r.logger, event, started)
 	}()
@@ -149,6 +164,8 @@ func acceptanceError(err error) error {
 		return status.Error(codes.FailedPrecondition, "unsupported event version")
 	case errors.Is(err, inbound.ErrConflict):
 		return status.Error(codes.AlreadyExists, "event identity conflicts with accepted content")
+	case errors.Is(err, inbound.ErrOverloaded):
+		return grpccontract.Overloaded()
 	case errors.Is(err, inbound.ErrUnavailable):
 		return status.Error(codes.Unavailable, "durable inbox unavailable")
 	case errors.Is(err, inbound.ErrNotImplemented):
@@ -159,6 +176,9 @@ func acceptanceError(err error) error {
 }
 
 func transportErrorCode(err error) string {
+	if grpccontract.IsOverloaded(err) {
+		return "overloaded"
+	}
 	switch status.Code(err) {
 	case codes.Canceled:
 		return "canceled"

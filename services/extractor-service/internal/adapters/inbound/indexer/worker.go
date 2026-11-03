@@ -74,7 +74,7 @@ func (w *Worker) Run(ctx context.Context) error {
 		}
 		if err != nil && !errors.Is(err, domain.ErrBackpressure) {
 			failures++
-			if errors.Is(err, domain.ErrRecoveryRequired) || errors.Is(err, outbound.ErrRetryDeferred) || failures >= w.maxErrors {
+			if errors.Is(err, outbound.ErrSourcePermanent) || errors.Is(err, domain.ErrChainMismatch) || errors.Is(err, domain.ErrRecoveryRequired) || errors.Is(err, outbound.ErrRetryDeferred) || errors.Is(err, outbound.ErrRPCBudgetExceeded) || failures >= w.maxErrors {
 				return fmt.Errorf("indexing halted: %w", err)
 			}
 		} else {

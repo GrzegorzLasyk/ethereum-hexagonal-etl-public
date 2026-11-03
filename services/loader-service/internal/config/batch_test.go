@@ -1,0 +1,28 @@
+package config_test
+
+import (
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/config"
+	"testing"
+)
+
+func TestSQLBatchSize(t *testing.T) {
+	setDefaults(t)
+	for _, c := range []struct {
+		value string
+		want  int
+	}{{"", 64}, {"1", 1}, {"256", 256}, {"0", 0}, {"257", 0}, {"-1", 0}, {"bad", 0}} {
+		t.Run(c.value, func(t *testing.T) {
+			t.Setenv("LOADER_SQL_BATCH_SIZE", c.value)
+			got, err := config.Load()
+			if c.want == 0 {
+				if err == nil {
+					t.Fatal("invalid batch size accepted")
+				}
+				return
+			}
+			if err != nil || got.SQLBatchSize != c.want {
+				t.Fatal(got.SQLBatchSize, err)
+			}
+		})
+	}
+}

@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "integrity_checks": [
+    "sha256_raw_results",
+    "pinned_chain_number_hash",
+    "complete_ordered_receipts",
+    "counts_and_coverage",
+    "production_adapter_validation"
+  ],
+  "candidates": [
+    {
+      "id": "historical-smoke",
+      "chain_id": "1",
+      "block_number": 1000000,
+      "block_hash": "0x8e38b4dbf6b11fcc3b9dee84fb7986e29ca0a02cecd8977c161ff7333329681e",
+      "counts": {"transactions": 2, "receipts": 2, "logs": null},
+      "provenance": "2026-10-27 public REST metadata: https://eth.blockscout.com/api/v2/blocks/1000000 . User reports Infura smoke PASS: 2 transactions, 2 receipts, 5 requests; raw results not retained here.",
+      "acquisition_method": "jsonrpc-block-and-all-receipts",
+      "purpose": "First small capture; historical pre-Byzantium receipt roots. Explorer transaction type is null; raw legacy coverage remains unverified for this case.",
+      "coverage": [],
+      "state": "capture_pending"
+    },
+    {
+      "id": "london-access-list",
+      "chain_id": "1",
+      "block_number": 12965000,
+      "block_hash": "0x9b83c12c69edb74f6c8dd5d052765c1adf940e320bd1291696e6fa07829eee71",
+      "counts": {"transactions": 259, "receipts": null, "logs": null},
+      "provenance": "2026-10-27 public Blockscout REST block metadata and all 6 transaction pages: https://eth.blockscout.com/api/v2/blocks/12965000 . No RPC capture.",
+      "acquisition_method": "jsonrpc-block-and-all-receipts",
+      "purpose": "Legacy and access-list envelopes, failed receipt, contract event logs; London activation alone does not establish type-2 coverage.",
+      "coverage": [
+        {
+          "feature": "type_0",
+          "state": "explorer_verified",
+          "transaction_hash": "0xfef26508d834fbc94c5150bf623f97e8d3063910fe5f5d0e7671b7a8dc51a5ac",
+          "evidence": "https://eth.blockscout.com/api/v2/blocks/12965000/transactions first page: type=0."
+        },
+        {
+          "feature": "failed_receipt",
+          "state": "explorer_verified",
+          "transaction_hash": "0xfef26508d834fbc94c5150bf623f97e8d3063910fe5f5d0e7671b7a8dc51a5ac",
+          "evidence": "https://eth.blockscout.com/api/v2/blocks/12965000/transactions first page: status=error, result=Reverted; raw receipt status still requires capture."
+        },
+        {
+          "feature": "type_1",
+          "state": "explorer_verified",
+          "transaction_hash": "0xf6a0743de5a49d44a87e3f050824a9e20b9bbacaa6227595b66a3a5653f13b92",
+          "evidence": "https://eth.blockscout.com/api/v2/blocks/12965000/transactions first page: type=1, status=ok."
+        },
+        {
+          "feature": "event_logs",
+          "state": "explorer_verified",
+          "transaction_hash": "0xf6a0743de5a49d44a87e3f050824a9e20b9bbacaa6227595b66a3a5653f13b92",
+          "evidence": "https://eth.blockscout.com/api/v2/transactions/0xf6a0743de5a49d44a87e3f050824a9e20b9bbacaa6227595b66a3a5653f13b92/logs returns 8 entries and no next page. This is not a whole-block log count."
+        }
+      ],
+      "state": "capture_pending"
+    },
+    {
+      "id": "pectra-blob-dynamic-fee",
+      "chain_id": "1",
+      "block_number": 22431084,
+      "block_hash": "0x50c8cab760b2948349c590461b166773c45d8f4858cccf5a43025ab2960152e8",
+      "counts": {"transactions": 95, "receipts": null, "logs": null},
+      "provenance": "2026-10-27 public REST metadata and both transaction pages: https://eth.blockscout.com/api/v2/blocks/22431084 . No RPC capture.",
+      "acquisition_method": "jsonrpc-block-and-all-receipts",
+      "purpose": "Dynamic-fee and blob transaction fields; preserve all header extensions and blob receipt fields, without blob sidecars. No type-4 transaction was found in the 95 entries.",
+      "coverage": [
+        {
+          "feature": "type_2",
+          "state": "explorer_verified",
+          "transaction_hash": "0xf1f6854d6490890ae3d9e9905951b6622d05d74f838b8977f9a16ad03db43138",
+          "evidence": "https://eth.blockscout.com/api/v2/blocks/22431084/transactions?index=49&block_number=22431084&items_count=50 second page: type=2."
+        },
+        {
+          "feature": "type_3",
+          "state": "explorer_verified",
+          "transaction_hash": "0x397ab13570fe50ca4c707b22f7826c2d4e9d0273fd6d8261040797de74ddf734",
+          "evidence": "https://eth.blockscout.com/api/v2/blocks/22431084/transactions first page: type=3, status=ok."
+        }
+      ],
+      "state": "capture_pending"
+    }
+  ],
+  "pending": [
+    {
+      "feature": "type_4",
+      "state": "pending",
+      "evidence": "No type-4 transaction in either inspected page of block 22431084. Select a verified type=4 transaction, pin its full block identity/count and verify authorizationList after authorized capture. EIP-7702 alone is not candidate evidence."
+    },
+    {
+      "feature": "contract_creation",
+      "state": "pending",
+      "evidence": "No created_contract in the inspected London block pages. Public address metadata lookup for 0xdAC17F958D2ee523a2206206994597C13D831ec7 returned HTTP 500; do not infer a creation transaction or block. Select a successful top-level creation with null transaction to and nonnull receipt contractAddress."
+    }
+  ]
+}

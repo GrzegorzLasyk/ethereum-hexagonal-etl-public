@@ -24,6 +24,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 // This harness imports only wire contracts. Services run as separate binaries,
@@ -151,7 +152,7 @@ func (p *rawProxy) SubmitRawBlock(c context.Context, r *etlv1.SubmitRawBlockRequ
 	p.mu.Lock()
 	if p.first == nil {
 		p.first = r
-	} else if !bytes.Equal(p.first.Payload.BlockJson, r.Payload.BlockJson) || p.first.Metadata.EventId != r.Metadata.EventId || !p.first.Metadata.ExtractedAt.AsTime().Equal(r.Metadata.ExtractedAt.AsTime()) {
+	} else if !proto.Equal(p.first, r) {
 		p.changed.Store(true)
 	}
 	p.mu.Unlock()
@@ -185,7 +186,7 @@ func (p *transformedProxy) SubmitTransformedBlock(c context.Context, r *etlv1.Su
 	p.mu.Lock()
 	if p.first == nil {
 		p.first = r
-	} else if !bytes.Equal(p.first.PayloadJson, r.PayloadJson) || p.first.Metadata.EventId != r.Metadata.EventId || !p.first.TransformedAt.AsTime().Equal(r.TransformedAt.AsTime()) {
+	} else if !proto.Equal(p.first, r) {
 		p.changed.Store(true)
 	}
 	p.mu.Unlock()
@@ -219,6 +220,7 @@ func TestHandoff(t *testing.T) {
 	if os.Getenv("HANDOFF_TEST_ISOLATED") != "1" {
 		t.Skip("run go run ./test/integration/cmd/handoff-postgres")
 	}
+	real := readRealInput(t)
 	root, e := filepath.Abs("../../..")
 	if e != nil {
 		t.Fatal(e)
@@ -234,6 +236,9 @@ func TestHandoff(t *testing.T) {
 		binaries[service] = binary
 	}
 	extracted, transformed, loaded := pool(t, "extractor"), pool(t, "transformer"), pool(t, "loader")
+	verificationPools := map[string]*pgxpool.Pool{"extractor": extracted, "transformer": transformed, "loader": loaded}
+	target := completionTarget(t, extracted, real)
+	verifyPartialCompletion(t, verificationPools, target)
 	transformerSlot, loaderSlot := reserve(t), reserve(t)
 	transformerAddress, loaderAddress := transformerSlot.Addr().String(), loaderSlot.Addr().String()
 	transformerSlot.Close()
@@ -247,7 +252,7 @@ func TestHandoff(t *testing.T) {
 		var env []string
 		for _, entry := range os.Environ() {
 			name, _, _ := strings.Cut(entry, "=")
-			if strings.HasPrefix(name, "EXTRACTOR_") || strings.HasPrefix(name, "TRANSFORMER_") || strings.HasPrefix(name, "LOADER_") || strings.HasPrefix(name, "HANDOFF_") || strings.HasPrefix(name, "PG") || name == "LOG_LEVEL" {
+			if strings.HasPrefix(name, "EXTRACTOR_") || strings.HasPrefix(name, "TRANSFORMER_") || strings.HasPrefix(name, "LOADER_") || strings.HasPrefix(name, "HANDOFF_") || strings.HasPrefix(name, "PG") || strings.HasPrefix(name, "ETHEREUM_") || strings.HasPrefix(name, "REAL_FIXTURE_") || name == "LOG_LEVEL" {
 				continue
 			}
 			env = append(env, entry)
@@ -314,7 +319,13 @@ func TestHandoff(t *testing.T) {
 	await(t, "normalized load completion", func() bool {
 		return queryInt(t, loaded, "SELECT count(*) FROM loader.inbox_events WHERE status='completed'") == 1
 	})
-	for table, want := range map[string]int{"blocks": 1, "transactions": 2, "receipts": 2, "logs": 1} {
+	counts := map[string]int{"blocks": 1, "transactions": 2, "receipts": 2, "logs": 1}
+	if real != nil {
+		counts["transactions"] = len(real.transactions)
+		counts["receipts"] = len(real.receipts)
+		counts["logs"] = len(real.logs)
+	}
+	for table, want := range counts {
 		if got := queryInt(t, loaded, "SELECT count(*) FROM loader."+table); got != want {
 			t.Fatalf("%s=%d want=%d", table, got, want)
 		}
@@ -324,6 +335,9 @@ func TestHandoff(t *testing.T) {
 	}
 	if raw.duplicates.Load() < 1 || normalized.duplicates.Load() < 1 || raw.changed.Load() || normalized.changed.Load() {
 		t.Fatal("duplicate delivery changed event or was not observed")
+	}
+	if real != nil {
+		assertRealPipeline(t, real, extracted, transformed, loaded, raw, normalized)
 	}
 	// Verify role isolation from the same credentials used by the processes.
 	for _, check := range []struct {
@@ -337,5 +351,6 @@ func TestHandoff(t *testing.T) {
 	ex.stop(t, false)
 	tr.stop(t, false)
 	lo.stop(t, false)
+	verifyCompleteAndFaults(t, verificationPools, target)
 	t.Log(fmt.Sprintf("durable handoff completed; raw duplicate ACKs=%d, transformed duplicate ACKs=%d", raw.duplicates.Load(), normalized.duplicates.Load()))
 }

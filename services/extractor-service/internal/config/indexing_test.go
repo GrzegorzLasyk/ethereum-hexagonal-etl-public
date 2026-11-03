@@ -8,7 +8,7 @@ import (
 func indexEnvironment(t *testing.T) {
 	t.Helper()
 	for k, v := range map[string]string{
-		"EXTRACTOR_DATABASE_URL": "postgres://placeholder", "EXTRACTOR_CHAIN_ID": "1", "EXTRACTOR_MODE": "index", "EXTRACTOR_START_BLOCK": "10", "EXTRACTOR_END_BLOCK": "12", "EXTRACTOR_CONFIRMATION_DEPTH": "0", "EXTRACTOR_RECOVERY_DEPTH": "10", "EXTRACTOR_MAX_OUTSTANDING_EVENTS": "100", "EXTRACTOR_MAX_OUTSTANDING_BYTES": "104857600", "EXTRACTOR_MAX_DATABASE_BYTES": "1073741824", "EXTRACTOR_RPC_URL": "https://example.invalid/private-secret", "EXTRACTOR_RPC_PROVIDER": "infura-mainnet", "EXTRACTOR_OPERATION_ID": "repair-1", "EXTRACTOR_REPLAY_EVENT_ID": "raw-block/v1/1/10/placeholder",
+		"EXTRACTOR_DATABASE_URL": "postgres://placeholder", "EXTRACTOR_CHAIN_ID": "1", "EXTRACTOR_MODE": "index", "EXTRACTOR_START_BLOCK": "10", "EXTRACTOR_END_BLOCK": "12", "EXTRACTOR_CONFIRMATION_DEPTH": "0", "EXTRACTOR_RECOVERY_DEPTH": "10", "EXTRACTOR_MAX_OUTSTANDING_EVENTS": "100", "EXTRACTOR_MAX_OUTSTANDING_BYTES": "104857600", "EXTRACTOR_MAX_DATABASE_BYTES": "1073741824", "EXTRACTOR_RPC_URL": "http://127.0.0.1/private-secret", "EXTRACTOR_RPC_PROVIDER": "infura-mainnet", "EXTRACTOR_OPERATION_ID": "repair-1", "EXTRACTOR_REPLAY_EVENT_ID": "raw-block/v1/1/10/placeholder",
 	} {
 		t.Setenv(k, v)
 	}
@@ -29,7 +29,7 @@ func TestIndexingConfiguration(t *testing.T) {
 		{"EXTRACTOR_END_BLOCK", "9"}, {"EXTRACTOR_CONFIRMATION_DEPTH", ""}, {"EXTRACTOR_RECOVERY_DEPTH", "0"}, {"EXTRACTOR_RECOVERY_DEPTH", "10001"},
 		{"EXTRACTOR_MAX_OUTSTANDING_EVENTS", "0"}, {"EXTRACTOR_MAX_OUTSTANDING_BYTES", ""}, {"EXTRACTOR_MAX_DATABASE_BYTES", "18446744073709551615"},
 		{"EXTRACTOR_BATCH_SIZE", "1001"}, {"EXTRACTOR_MAX_CYCLE_ERRORS", "0"}, {"EXTRACTOR_POLL_INTERVAL", "0s"}, {"EXTRACTOR_RPC_URL", "https://private-secret@host.invalid"},
-		{"EXTRACTOR_RPC_PROVIDER", ""}, {"EXTRACTOR_MODE", "unknown"},
+		{"EXTRACTOR_DRAIN_TIMEOUT", "0s"}, {"EXTRACTOR_DRAIN_TIMEOUT", "2m1ns"}, {"EXTRACTOR_RPC_PROVIDER", ""}, {"EXTRACTOR_MODE", "unknown"},
 	} {
 		t.Run(tc.name+tc.value, func(t *testing.T) {
 			t.Setenv(tc.name, tc.value)
@@ -71,5 +71,28 @@ func TestOperatorModes(t *testing.T) {
 	t.Setenv("EXTRACTOR_MODE", "dispatch")
 	if _, err := Load(); err != nil {
 		t.Fatal("dispatch requires RPC config", err)
+	}
+}
+
+func TestReceiptConcurrencyConfiguration(t *testing.T) {
+	indexEnvironment(t)
+	t.Setenv("EXTRACTOR_RECEIPT_CONCURRENCY", "")
+	c, e := Load()
+	if e != nil || c.Indexing.RPC.ReceiptConcurrency != 1 {
+		t.Fatal("unsafe receipt default", e)
+	}
+	for _, v := range []string{"0", "-1", "9", "many"} {
+		t.Run(v, func(t *testing.T) {
+			t.Setenv("EXTRACTOR_RECEIPT_CONCURRENCY", v)
+			if _, e := Load(); e == nil {
+				t.Fatal("invalid receipt concurrency accepted")
+			}
+		})
+	}
+	for _, v := range []string{"1", "2", "4", "8"} {
+		t.Setenv("EXTRACTOR_RECEIPT_CONCURRENCY", v)
+		if _, e := Load(); e != nil {
+			t.Fatal("bounded receipt configuration rejected", e)
+		}
 	}
 }

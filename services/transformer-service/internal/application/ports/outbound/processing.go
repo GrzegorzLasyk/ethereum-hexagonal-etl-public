@@ -32,6 +32,10 @@ type Failure struct {
 }
 
 // Inbox owns local durability and exact-content deduplication before ACK.
+// Inbox admission must atomically serialize new events against the owning
+// service capacity. Identical durable duplicates bypass capacity, conflicts do
+// not ACK, and ErrOverloaded leaves no new row. Transformer completion transfers
+// outstanding work to its Outbox without releasing a capacity slot.
 type Inbox interface {
 	Accept(context.Context, inbound.AcceptRawBlockRequest) (alreadyAccepted bool, err error)
 }

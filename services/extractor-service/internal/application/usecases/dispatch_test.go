@@ -41,6 +41,7 @@ func TestDispatchAcknowledgementBoundary(t *testing.T) {
 		permanent          bool
 	}{
 		{name: "durable ACK", outcome: "delivered", published: 1},
+		{name: "receiver overload", send: outbound.ErrPublishOverloaded, outcome: "retry", code: "overloaded", retried: 1},
 		{name: "lost ACK", send: outbound.ErrPublishUnavailable, outcome: "retry", code: "unavailable", retried: 1},
 		{name: "invalid ACK", send: outbound.ErrPublishACK, outcome: "retry", code: "invalid_ack", retried: 1},
 		{name: "conflict is not duplicate ACK", send: outbound.ErrPublishConflict, outcome: "failed", code: "conflict", retried: 1, permanent: true},
@@ -102,5 +103,17 @@ func TestDispatchTimeoutCancellationExhaustionAndIdle(t *testing.T) {
 		if d < 0 || d > time.Second {
 			t.Fatal("backoff overflow", d)
 		}
+	}
+}
+
+func TestOverloadExhaustsDurableAllowance(t *testing.T) {
+	f := &deliveryFake{item: &outbound.Delivery{Attempt: 3, MaxAttempts: 3}}
+	u, e := NewDispatch(f, publisherFunc(func(context.Context, outbound.Publication) error { return outbound.ErrPublishOverloaded }), time.Second, time.Millisecond, time.Second)
+	if e != nil {
+		t.Fatal(e)
+	}
+	result, e := u.DispatchOne(t.Context())
+	if e != nil || result.Outcome != "failed" || result.ErrorCode != "overloaded" || f.failure.Permanent || f.retried != 1 || f.published != 0 || f.failure.Delay < time.Millisecond {
+		t.Fatal("overload bypassed bounded durable retry", result, e)
 	}
 }

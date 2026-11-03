@@ -143,6 +143,7 @@ func TestAcceptanceFailuresNeverACK(t *testing.T) {
 		{"invalid", inbound.AcceptanceResult{}, inbound.ErrInvalidEvent, codes.InvalidArgument},
 		{"unsupported", inbound.AcceptanceResult{}, inbound.ErrUnsupportedVersion, codes.FailedPrecondition},
 		{"conflict", inbound.AcceptanceResult{}, inbound.ErrConflict, codes.AlreadyExists},
+		{"overloaded", inbound.AcceptanceResult{}, inbound.ErrOverloaded, codes.Unavailable},
 		{"offline", inbound.AcceptanceResult{}, inbound.ErrUnavailable, codes.Unavailable},
 		{"unimplemented", inbound.AcceptanceResult{}, inbound.ErrNotImplemented, codes.Unimplemented},
 		{"canceled", inbound.AcceptanceResult{}, context.Canceled, codes.Canceled},

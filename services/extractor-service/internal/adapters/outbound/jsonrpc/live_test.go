@@ -5,7 +5,6 @@ package jsonrpc
 import (
 	"context"
 	"os"
-	"strconv"
 	"testing"
 	"time"
 )
@@ -13,26 +12,18 @@ import (
 // TestLiveMainnetBlock is opt-in, uses provider credits, and never persists data.
 // These explicit budgets are for this smoke test, not service defaults.
 func TestLiveMainnetBlock(t *testing.T) {
-	endpoint := os.Getenv("ETHEREUM_RPC_URL")
-	if endpoint == "" {
-		t.Skip("set ETHEREUM_RPC_URL to enable the live smoke test")
-	}
-	number, err := strconv.ParseUint(os.Getenv("ETHEREUM_SMOKE_BLOCK"), 10, 64)
+	cfg, number, duration, err := smokeSettings(os.Getenv)
 	if err != nil {
-		t.Fatal("ETHEREUM_SMOKE_BLOCK must be an explicit decimal block number")
-	}
-	c, err := New(Config{
-		URL: endpoint, ChainID: "1", Provider: "infura-mainnet",
-		RequestTimeout: 15 * time.Second, MaxAttempts: 3,
-		InitialBackoff: 500 * time.Millisecond, MaxBackoff: 5 * time.Second,
-		MinRequestInterval: 200 * time.Millisecond,
-		MaxResponseBytes:   8 << 20, MaxSnapshotBytes: 64 << 20,
-	}, nil)
+		t.Fatal(err)
+	} // Explicit invocation must fail, never silently skip.
+	c, err := New(cfg, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(t.Context(), duration)
 	defer cancel()
+	started := time.Now()
+	defer func() { t.Logf("rpc_attempts=%d duration_ms=%d", c.Requests(), time.Since(started).Milliseconds()) }()
 	e, err := c.Block(ctx, number)
 	if err != nil {
 		t.Fatal(err)

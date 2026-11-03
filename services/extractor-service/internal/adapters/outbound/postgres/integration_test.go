@@ -55,7 +55,9 @@ func TestPostgresIntegration(t *testing.T) {
 	t.Run("operational metrics", func(t *testing.T) { testMetrics(t, runtime, owner) })
 	t.Run("schema readiness", func(t *testing.T) { testReadiness(t, runtime, owner) })
 	t.Run("stage10 indexing", func(t *testing.T) { testIndexing(t, runtime, owner) })
+	t.Run("RPC checkpoint preservation", func(t *testing.T) { testRPCCheckpointPreservation(t, runtime) })
 	t.Run("outbox delivery", func(t *testing.T) { testOutbox(t, runtime, owner) })
+	t.Run("finite range drain", func(t *testing.T) { testRangeDelivery(t, runtime) })
 	ctx := t.Context()
 	var next uint64 = 100000
 	newStore := func(t *testing.T, start uint64) *Store {
