@@ -252,4 +252,9 @@ query calls. SQL write counts include batch callbacks, including successful
 statements later rolled back; always require final integrity/commit evidence.
 Per-statement latency is unavailable for pipelined writes, and submission counts
 are not exact wire round trips. See [the comparison procedure](loader-batching-stage14.md).
-No Stage 14.4 benchmark results have been recorded.
+The [Phase 2 execution record](validation-performance-stage14.md) consolidates nine
+complete configurations: batches 1/64 at workers 1/2/4/8 and batch256 at worker 1.
+Batch64 improved measured single-worker throughput on the two larger authentic
+blocks, while tiny synthetic blocks showed little batching benefit. Batch256 did
+not improve on batch64. The reduced educational scope is sufficient for Phase 3;
+the interrupted batch256/W2 and unrun W4/W8 cases remain explicit gaps.

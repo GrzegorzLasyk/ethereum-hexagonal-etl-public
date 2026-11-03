@@ -1,8 +1,11 @@
 # Stage 14.4 — Bounded PostgreSQL writes in Loader
 
-Status: implementation and targeted offline checks complete; PostgreSQL execution,
-authentic fixture regression and throughput measurements are deferred to final
-validation. No migration, contract, canonicality or application policy changes.
+Status: implementation complete. [Phase 1](validation-offline-stage14.md) records
+PostgreSQL and authentic fixture validation. [Phase 2](validation-performance-stage14.md)
+compares batches 1/64/256 at one worker and batches 1/64 at workers 1/2/4/8.
+Measured results support retaining batch64 for the educational workload; the full
+batch256 worker matrix remains incomplete. No migration, contract, canonicality
+or application policy changes.
 
 ## Algorithm and configuration
 

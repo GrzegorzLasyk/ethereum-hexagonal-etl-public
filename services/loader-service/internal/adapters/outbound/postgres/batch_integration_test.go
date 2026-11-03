@@ -30,7 +30,8 @@ func testBatches(t *testing.T, runtime, owner *pgxpool.Pool) {
 			var data string
 			// Compare every normalized field, including nulls and observations.
 			// loaded_at is execution metadata and necessarily differs between runs.
-			if err := runtime.QueryRow(ctx, "SELECT COALESCE(jsonb_agg(to_jsonb(r)-'loaded_at' ORDER BY (to_jsonb(r)-'loaded_at')::text),'[]'::jsonb)::text FROM loader."+table+" r").Scan(&data); err != nil {
+			// Qualify the whole row: transactions also has a scalar column named r.
+			if err := runtime.QueryRow(ctx, "SELECT COALESCE(jsonb_agg(to_jsonb(r.*)-'loaded_at' ORDER BY (to_jsonb(r.*)-'loaded_at')::text),'[]'::jsonb)::text FROM loader."+table+" r").Scan(&data); err != nil {
 				t.Fatal(err)
 			}
 			result = append(result, data)

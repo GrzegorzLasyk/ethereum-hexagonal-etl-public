@@ -218,7 +218,9 @@ func TestPerformanceBaseline(t *testing.T) {
 			}
 			done = done && queryInt(t, p, "SELECT count(*) FROM "+table+" WHERE status='"+queue.terminal+"'") == s.Blocks && queryInt(t, p, "SELECT count(*) FROM "+table) == s.Blocks
 		}
-		if sourceFinished && done {
+		// Queue counts can observe a commit made after the completed-ID query.
+		// Wait for its next observation before calculating every event's latency.
+		if sourceFinished && done && len(completed) == s.Blocks {
 			break
 		}
 		if time.Since(lastSample) >= 250*time.Millisecond {

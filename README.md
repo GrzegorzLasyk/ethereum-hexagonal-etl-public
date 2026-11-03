@@ -2,11 +2,15 @@
 
 An incrementally developed Ethereum ETL system in Go, with independently bounded Extractor, Transformer, and Loader services using Hexagonal Architecture.
 
-**Current status:** Stages 0–14.5 are implemented and scope is frozen. Final
-validation and release approval remain pending; historical stage results do not
-certify the current tree. See the [static review](docs/architecture/static-review-stage14.md)
-and [release checklist](docs/architecture/release-stage14.md). Testing and runtime
-validation will resume only on explicit user instruction.
+**Current status:** Stages 0–14.5 and the final static review are complete; scope is
+frozen. [Phase 1 offline validation](docs/architecture/validation-offline-stage14.md)
+passed; [Phase 2 performance validation](docs/architecture/validation-performance-stage14.md)
+was accepted for the documented educational scope; [Phase 3 live E2E and no-RPC
+recovery](docs/architecture/validation-live-stage14.md) passed for block 1000000.
+Final Git review, hosted CI on the intended release revision and human release
+approval remain separate gates. This is not full production validation. See the
+[release checklist](docs/architecture/release-stage14.md). The single authorized
+live acquisition has been consumed; do not repeat it automatically.
 
 The stage summaries below describe the increments that introduced each capability.
 
@@ -68,8 +72,8 @@ receipts, five requests). Stage 13.3A prepares [Mainnet fixture selection and bo
 versioned metadata, explicit gaps, raw-byte integrity and offline validation.
 Three authentic captures are held in private local storage. Stage 13.3C offline
 ETL regression, Stage 13.4 bounded E2E tooling and Stage 13.5 audited recovery are
-implemented; final acceptance remains pending. Captures are not distributed with
-the repository and are not required by ordinary unit tests or CI.
+implemented and covered by the scoped Phase 1/3 records above. Captures are not
+distributed with the repository and are not required by ordinary unit tests or CI.
 
 Stage 13.3B [offline preflight and ordered capture commands](docs/architecture/mainnet-capture-stage13.md)
 are prepared. Use `fixture-capture verify MANIFEST CASE ARTIFACT` to validate
@@ -888,8 +892,9 @@ One comprehensive offline validation, preserving all test volumes and artifacts:
 bash scripts/validate-final.sh offline --opt-in .mainnet/fixtures/stage13-3b
 ```
 
-[Validation results and remaining live acceptance](docs/architecture/validation-stage13-final.md)
-are recorded separately. Missing private fixtures or Docker fail explicitly.
+[Historical Stage 13 results](docs/architecture/validation-stage13-final.md) and
+[final offline results](docs/architecture/validation-offline-stage14.md) are recorded
+separately. Missing private fixtures or Docker fail explicitly.
 
 ### Offline performance baseline (Stage 14.1)
 
@@ -941,14 +946,15 @@ and `canonical_status=unknown` are preserved. No migration is needed.
 
 See [batching guarantees, tests and offline before/after commands](docs/architecture/loader-batching-stage14.md).
 The baseline runner accepts `--loader-batch-size 1|64` (or any value in 1..256),
-records the setting and measures batch calls/durations. Database execution and
-throughput comparisons remain deferred; fewer submissions are not a measured
-performance claim.
+records the setting and measures batch calls/durations. [Phase 2 measurements](docs/architecture/validation-performance-stage14.md)
+support retaining batch64 for the educational workload, with no universal speedup
+claim. Batch submissions are neither SQL statement counts nor measured network
+round trips; the batch256 worker matrix remains incomplete.
 
 ### Final validation and release preparation (Stage 14.5)
 
-Implementation scope is frozen to the three-service Ethereum ETL. The next step
-is comprehensive validation, not additional features. Start with the
+Implementation scope is frozen to the three-service Ethereum ETL. The next steps
+are final Git/CI review and separately authorized release preparation. Start with the
 [final configuration audit and release checklist](docs/architecture/release-stage14.md).
 
 ```sh
@@ -960,4 +966,8 @@ Separate `performance --opt-in` and `live --opt-in` phases are documented there;
 no command automatically runs all phases. The live phase additionally requires the
 private Mainnet opt-in, block1000000, <=100 attempts and <=2m acquisition. Do not
 confuse prepared workflows, prior-stage checks or an advanced checkpoint with
-final acceptance. Minimal Stage 14.5 checks do not establish production readiness.
+final acceptance. The completed Phase 1–3 records above document actual scope and
+limitations; hosted CI and release approval are still required. The `CI` workflow
+requires both `Quality` and `Integration` jobs on a pull request. It also runs on
+pushes to `main`, but a feature-branch push alone does not trigger it. Private
+authentic captures, benchmarks and live RPC are not implicit CI jobs.
