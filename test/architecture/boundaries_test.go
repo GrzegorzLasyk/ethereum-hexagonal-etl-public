@@ -1,3 +1,8 @@
+// boundaries_test.go exercises static inward dependency and owning-schema boundaries in the
+// offline test and diagnostic infrastructure.
+
+// Package architecture_test provides static inward dependency and owning-schema boundaries in the
+// offline test and diagnostic infrastructure.
 package architecture_test
 
 import (
@@ -15,6 +20,7 @@ import (
 	"testing"
 )
 
+// module pins the repository import prefix for static Hexagonal Architecture boundary checks.
 const module = "github.com/GrzegorzLasyk/ethereum-hexagonal-etl"
 
 // Deliberately explicit: adding a core dependency requires reviewing its purity.
@@ -25,8 +31,11 @@ var pureImports = map[string]bool{
 	"slices": true, "strings": true, "time": true,
 }
 
+// within checks path membership on directory boundaries so similarly prefixed sibling packages do
+// not match.
 func within(path, root string) bool { return path == root || strings.HasPrefix(path, root+"/") }
 
+// importViolation classifies a candidate import against the owning service/layer dependency rules.
 func importViolation(service, layer, imp string) string {
 	own := module + "/services/" + service
 	if strings.HasPrefix(imp, module+"/services/") && !within(imp, own) {
@@ -45,6 +54,8 @@ func importViolation(service, layer, imp string) string {
 	return "unapproved core dependency (infrastructure or outside the inward boundary)"
 }
 
+// TestHexagonalArchitecture inspects repository imports and schema references to enforce inward
+// service boundaries.
 func TestHexagonalArchitecture(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)
 	if !ok {
@@ -122,8 +133,13 @@ func TestHexagonalArchitecture(t *testing.T) {
 // strings. This is a static tripwire, not a SQL parser or a privilege boundary.
 // Runtime-built SQL and search_path indirection still need permission tests.
 var schemaReference = regexp.MustCompile(`(?i)\b(extractor|transformer|loader)"?\s*\.\s*"?[a-z_]`)
+
+// sqlComments removes SQL comments before policy matching so comment text is not mistaken for
+// executed schema access.
 var sqlComments = regexp.MustCompile(`(?s)/\*.*?\*/|--[^\n]*`)
 
+// foreignSchemas identifies forbidden owning-schema references after excluding SQL comments from
+// policy input.
 func foreignSchemas(text, owner string) []string {
 	text = sqlComments.ReplaceAllString(text, " ")
 	var result []string
@@ -136,6 +152,8 @@ func foreignSchemas(text, owner string) []string {
 	return result
 }
 
+// goSchemaViolations inspects Go syntax for static SQL/schema use that crosses the service
+// ownership boundary.
 func goSchemaViolations(set *token.FileSet, files []*ast.File, owner string) []string {
 	// Fold literal concatenations and package constants, including across files.
 	constants := map[string]ast.Expr{}
@@ -179,6 +197,8 @@ func goSchemaViolations(set *token.FileSet, files []*ast.File, owner string) []s
 	return violations
 }
 
+// constantString resolves bounded static string expressions with cycle detection for architecture
+// policy inspection.
 func constantString(expr ast.Expr, constants map[string]ast.Expr, visiting map[string]bool) (string, bool) {
 	switch e := expr.(type) {
 	case *ast.BasicLit:

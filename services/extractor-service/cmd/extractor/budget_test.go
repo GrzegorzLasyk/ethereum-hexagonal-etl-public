@@ -1,3 +1,6 @@
+// budget_test.go exercises shared request/run budget exhaustion and cancellation in the service
+// composition/operator entry point.
+
 package main
 
 import (
@@ -10,6 +13,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/application/ports/outbound"
 )
 
+// TestRunBudget checks a whole-run deadline covers service acquisition lifetime and propagates its
+// classified exhaustion.
 func TestRunBudget(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		joined := false

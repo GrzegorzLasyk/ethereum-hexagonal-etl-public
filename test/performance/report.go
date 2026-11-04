@@ -1,3 +1,6 @@
+// report.go implements benchmark scenario validation and integrity-gated evidence output in the
+// offline test and diagnostic infrastructure.
+
 // Package performance defines the offline baseline's versioned, secret-free report.
 // It is test tooling, not a shared service domain or production scheduler.
 package performance
@@ -11,6 +14,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/baseline"
 )
 
+// Scenario pins dataset, repetitions, worker/batch settings and output identity for an opt-in
+// offline benchmark.
 type Scenario struct {
 	LoaderBatchSize int    `json:"loader_sql_batch_size"`
 	Dataset         string `json:"dataset"` // authentic-mainnet or synthetic-stage11
@@ -33,6 +38,8 @@ type WireSpec struct {
 	ArtifactPath, ManifestPath, OutputDirectory, BinaryDirectory string
 }
 
+// ReadScenario loads a bounded benchmark scenario and validates its dataset/resource/output
+// contract before execution.
 func ReadScenario() (Scenario, error) {
 	if os.Getenv("ETL_BASELINE_OPT_IN") != "1" || os.Getenv("CI") != "" || os.Getenv("GITHUB_ACTIONS") != "" {
 		return Scenario{}, errors.New("baseline requires explicit local opt-in")
@@ -55,6 +62,9 @@ func ReadScenario() (Scenario, error) {
 	s.Binaries = w.BinaryDirectory
 	return s, s.Validate()
 }
+
+// Validate rejects unsupported datasets, unsafe output paths and unbounded benchmark
+// worker/repetition settings.
 func (s Scenario) Validate() error {
 	if s.LoaderBatchSize < 0 || s.LoaderBatchSize > 256 {
 		return errors.New("invalid Loader batch size")
@@ -79,6 +89,8 @@ func (s Scenario) Validate() error {
 	}
 	return nil
 }
+
+// ExclusiveJSON writes a new JSON evidence file without replacing an existing result.
 func ExclusiveJSON(path string, v any) error {
 	f, e := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if e != nil {
@@ -90,29 +102,40 @@ func ExclusiveJSON(path string, v any) error {
 	return enc.Encode(v)
 }
 
+// SeedEvent records a source event identity and acquisition timing used to correlate end-to-end
+// latency.
 type SeedEvent struct {
 	EventID         string    `json:"event_id"`
 	Started         time.Time `json:"started_at"`
 	DurationSeconds float64   `json:"duration_seconds"`
 }
+
+// Seed records offline source completion and identities without replacing the authentic payloads.
 type Seed struct {
 	Events                       []SeedEvent `json:"events"`
 	Transactions, Receipts, Logs int
 	PayloadBytes                 int64
 	DuplicateVerified            bool `json:"duplicate_verified"`
 }
+
+// Sample groups a timestamped metrics observation during an offline baseline run.
 type Sample struct {
 	At         time.Time         `json:"at"`
 	Checkpoint *uint64           `json:"checkpoint"`
 	Completed  int               `json:"completed_blocks"`
 	Metrics    map[string]string `json:"prometheus"`
 }
+
+// RPC records observed handoff counts, payload sizes and duration samples for a benchmark report.
 type RPC struct {
 	Attempts     int                   `json:"attempts"`
 	Errors       int                   `json:"errors"`
 	PayloadBytes int64                 `json:"protobuf_message_bytes"`
 	Latency      baseline.Distribution `json:"durable_ack_latency"`
 }
+
+// Report retains dataset/configuration, timing, resource observations and mandatory integrity
+// evidence for a baseline.
 type Report struct {
 	Version               string                           `json:"report_version"`
 	Status                string                           `json:"status"`
@@ -133,6 +156,8 @@ type Report struct {
 	Limitations           []string                         `json:"limitations"`
 }
 
+// Accept allows success/throughput only after all required integrity flags and timing/count
+// evidence are complete.
 func (r *Report) Accept(elapsed time.Duration, blocks, txs int) error {
 	if elapsed <= 0 || blocks != r.Scenario.Blocks || txs < 0 || len(r.Integrity) == 0 {
 		return errors.New("invalid completed baseline")

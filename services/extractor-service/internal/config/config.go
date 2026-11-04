@@ -1,3 +1,8 @@
+// config.go implements validated environment configuration and conservative startup limits in the
+// startup configuration boundary.
+
+// Package config provides validated environment configuration and conservative startup limits in
+// the startup configuration boundary.
 package config
 
 import (
@@ -22,6 +27,8 @@ type Config struct {
 	Indexing        IndexingConfig
 }
 
+// Load parses environment configuration and validates required identities, resource budgets and
+// lifetime relationships before startup.
 func Load() (Config, error) {
 	c := Config{DatabaseURL: os.Getenv("EXTRACTOR_DATABASE_URL"), ChainID: domain.ChainID(os.Getenv("EXTRACTOR_CHAIN_ID")), Limits: grpccontract.DefaultLimits()}
 	switch strings.ToUpper(strings.TrimSpace(os.Getenv("LOG_LEVEL"))) {

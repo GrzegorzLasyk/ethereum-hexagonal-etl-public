@@ -1,3 +1,6 @@
+// dispatch_test.go exercises durable delivery coordination and retry policy in the startup
+// configuration boundary.
+
 package config
 
 import (
@@ -5,6 +8,8 @@ import (
 	"time"
 )
 
+// TestDispatchConfiguration checks worker/deadline/lease/backoff relationships for safe Outbox
+// operation.
 func TestDispatchConfiguration(t *testing.T) {
 	c, e := loadDispatch()
 	if e != nil || c.Workers != 1 || c.MaxAttempts != 20 || c.Lease <= c.Timeout || c.Timeout <= c.RPCTimeout {

@@ -1,3 +1,6 @@
+// logging_test.go exercises event correlation and secret/error redaction on success and failure in
+// the service composition/operator entry point.
+
 package main
 
 import (
@@ -11,6 +14,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/config"
 )
 
+// TestReplayStartupFailureKeepsIdentityWithoutDSN checks early operator failure logs retain the
+// replay event ID without exposing its database URL.
 func TestReplayStartupFailureKeepsIdentityWithoutDSN(t *testing.T) {
 	var output bytes.Buffer
 	id := "raw-block/v1/1/42/" + strings.Repeat("a", 64)

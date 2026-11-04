@@ -1,3 +1,6 @@
+// usecases_test.go exercises durable acceptance/processing, provenance and ambiguous outcomes in
+// the application orchestration layer.
+
 package usecases
 
 import (
@@ -26,6 +29,8 @@ type fakeStore struct {
 	afterAccept                               func()
 }
 
+// Accept returns controlled durable duplicate/new/error outcomes and records whether acceptance
+// was invoked.
 func (s *fakeStore) Accept(ctx context.Context, r inbound.AcceptRawBlockRequest) (bool, error) {
 	s.accepted++
 	if s.afterAccept != nil {
@@ -33,15 +38,26 @@ func (s *fakeStore) Accept(ctx context.Context, r inbound.AcceptRawBlockRequest)
 	}
 	return s.duplicate, s.acceptErr
 }
+
+// Claim returns the controlled claimed item or storage error without a database.
 func (s *fakeStore) Claim(context.Context) (*outbound.Item, error) { return s.item, s.claimErr }
+
+// Complete records the proposed result and returns the configured completion outcome, including
+// ambiguity or lease loss.
 func (s *fakeStore) Complete(_ context.Context, _ outbound.Item, r outbound.Result) error {
 	s.completed = &r
 	return s.completeErr
 }
+
+// Fail captures the safe processing failure so tests can detect forbidden mutation after uncertain
+// completion.
 func (s *fakeStore) Fail(_ context.Context, _ outbound.Item, f outbound.Failure) error {
 	s.failure = &f
 	return s.failErr
 }
+
+// event builds a valid deterministic application/transport request so one invariant can be varied
+// per case.
 func event(t *testing.T) inbound.AcceptRawBlockRequest {
 	t.Helper()
 	read := func(name string) []byte {
@@ -60,6 +76,9 @@ func event(t *testing.T) inbound.AcceptRawBlockRequest {
 		Block: inbound.BlockIdentity{ChainID: "1", Number: 20000000, Hash: hash, ParentHash: parent}, Provider: "fixture", ExtractedAt: time.Unix(100, 123),
 		RawBlock: read("block.json"), RawReceipts: [][]byte{read("receipt_0.json"), read("receipt_1.json")}}
 }
+
+// processor wires the real application use case to controlled test ports and fails immediately on
+// invalid setup.
 func processor(t *testing.T, s *fakeStore) *Process {
 	t.Helper()
 	e, _ := jsondocument.New(64 << 20)
@@ -69,6 +88,9 @@ func processor(t *testing.T, s *fakeStore) *Process {
 	}
 	return p
 }
+
+// TestAcceptanceCommitAndFailures checks that the acceptance result reflects committed/new versus
+// identical stored input and propagates storage failure.
 func TestAcceptanceCommitAndFailures(t *testing.T) {
 	for _, duplicate := range []bool{false, true} {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -93,6 +115,9 @@ func TestAcceptanceCommitAndFailures(t *testing.T) {
 		}
 	}
 }
+
+// TestApplicationEnvelopeValidation checks invalid metadata/payload boundaries before the durable
+// storage port can be invoked.
 func TestApplicationEnvelopeValidation(t *testing.T) {
 	for _, change := range []func(*inbound.AcceptRawBlockRequest){
 		func(r *inbound.AcceptRawBlockRequest) { r.EventID = "wrong" }, func(r *inbound.AcceptRawBlockRequest) { r.EventVersion = 2 },
@@ -118,6 +143,9 @@ func TestApplicationEnvelopeValidation(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestProcessSuccessAndPoison checks valid input atomically completes and invalid input becomes
+// retained terminal work.
 func TestProcessSuccessAndPoison(t *testing.T) {
 	for _, tt := range []struct {
 		name          string
@@ -147,6 +175,9 @@ func TestProcessSuccessAndPoison(t *testing.T) {
 		})
 	}
 }
+
+// TestProcessingRetryAndAmbiguousCommit distinguishes retryable processing failure from
+// cancellation or uncertain completion that must not receive a second mutation.
 func TestProcessingRetryAndAmbiguousCommit(t *testing.T) {
 	for _, err := range []error{inbound.ErrUnavailable, outbound.ErrCommitUnknown, outbound.ErrLeaseLost} {
 		s := &fakeStore{item: &outbound.Item{Event: event(t), Attempt: 2, MaxAttempts: 3}, completeErr: err}
@@ -175,6 +206,9 @@ func TestProcessingRetryAndAmbiguousCommit(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+// TestBackoffAndOutputFailure checks capped retry delay and terminal oversized output without
+// admitting partial transformed data.
 func TestBackoffAndOutputFailure(t *testing.T) {
 	s := &fakeStore{item: &outbound.Item{Event: event(t), Attempt: 1, MaxAttempts: 2}}
 	p := processor(t, s)

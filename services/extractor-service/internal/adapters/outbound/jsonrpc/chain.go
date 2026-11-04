@@ -1,3 +1,8 @@
+// chain.go implements provider head/header observations for ordered extraction and recovery in the
+// outbound adapter layer.
+
+// Package jsonrpc acquires identity-checked Ethereum blocks and receipts through bounded JSON-RPC,
+// sharing pacing, retries and attempt budgets.
 package jsonrpc
 
 import (
@@ -8,6 +13,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
 
+// Compile-time interface assertion checks adapter/interface compatibility at compile time without
+// allocating runtime state.
 var _ outbound.ChainObserver = (*Client)(nil)
 
 // Head observes latest, including its identity, rather than treating a height
@@ -16,10 +23,13 @@ func (c *Client) Head(ctx context.Context) (domain.Header, error) {
 	return c.header(ctx, "latest", nil)
 }
 
+// Header observes a numbered provider header with chain validation and the same RPC budgets as
+// full acquisition.
 func (c *Client) Header(ctx context.Context, number uint64) (domain.Header, error) {
 	return c.header(ctx, fmt.Sprintf("0x%x", number), &number)
 }
 
+// header reads a provider header through the same bounded RPC path used by acquisition.
 func (c *Client) header(ctx context.Context, tag string, expected *uint64) (domain.Header, error) {
 	var empty domain.Header
 	chain, err := c.ChainID(ctx)

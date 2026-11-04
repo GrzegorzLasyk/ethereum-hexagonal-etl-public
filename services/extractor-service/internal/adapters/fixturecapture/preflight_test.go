@@ -1,3 +1,6 @@
+// preflight_test.go exercises fixture capture safety guards, identity pins and no-overwrite
+// behavior in the Extractor fixture/operator adapter.
+
 package fixturecapture
 
 import (
@@ -14,6 +17,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
 
+// writeArtifact writes the test's controlled artifact so integrity checks can exercise intentional
+// tampering.
 func writeArtifact(t *testing.T, path string, a Artifact) {
 	t.Helper()
 	b, err := json.Marshal(a)
@@ -25,6 +30,8 @@ func writeArtifact(t *testing.T, path string, a Artifact) {
 	}
 }
 
+// TestPreflightPinsAndBudgets checks capture candidates, explicit historical identity and bounded
+// attempt/time settings before acquisition.
 func TestPreflightPinsAndBudgets(t *testing.T) {
 	m, err := LoadManifest("../../../../../test/fixtures/mainnet/v1/manifest.json")
 	if err != nil {
@@ -65,6 +72,8 @@ func TestPreflightPinsAndBudgets(t *testing.T) {
 	}
 }
 
+// TestVerifyAnchorsSelectionAndNeverUsesNetwork requires offline verification to bind the artifact
+// to its reviewed manifest candidate without source discovery.
 func TestVerifyAnchorsSelectionAndNeverUsesNetwork(t *testing.T) {
 	// All tests in this package are sequential. Any accidental fallback to the
 	// default HTTP transport fails before network access, including proxy use.
@@ -103,6 +112,8 @@ func TestVerifyAnchorsSelectionAndNeverUsesNetwork(t *testing.T) {
 	}
 }
 
+// TestOfflineArtifactSecretChecks rejects endpoint/credential traces in local artifacts without
+// making provider requests.
 func TestOfflineArtifactSecretChecks(t *testing.T) {
 	c, e := synthetic(t)
 	path := filepath.Join(t.TempDir(), "fixture.json")
@@ -128,6 +139,8 @@ func TestOfflineArtifactSecretChecks(t *testing.T) {
 	}
 }
 
+// TestOfflineTransactionReceiptAndLogIntegrity mutates captured membership, indexes and types to
+// verify offline rejection of inconsistent source data.
 func TestOfflineTransactionReceiptAndLogIntegrity(t *testing.T) {
 	c, e := synthetic(t)
 	path := filepath.Join(t.TempDir(), "fixture.json")
@@ -189,11 +202,15 @@ func TestOfflineTransactionReceiptAndLogIntegrity(t *testing.T) {
 	}
 }
 
+// racingSource creates a competing capture output during acquisition to test exclusive publication
+// without overwrite.
 type racingSource struct {
 	*fakeSource
 	path string
 }
 
+// Block returns or fails a controlled complete source snapshot so acquisition/persistence
+// boundaries can be exercised.
 func (s racingSource) Block(ctx context.Context, n uint64) (domain.Extraction, error) {
 	if err := os.WriteFile(s.path, []byte("existing data"), 0600); err != nil {
 		return domain.Extraction{}, err
@@ -201,6 +218,8 @@ func (s racingSource) Block(ctx context.Context, n uint64) (domain.Extraction, e
 	return s.fakeSource.Block(ctx, n)
 }
 
+// TestCaptureNeverReplacesExistingOrRacedFiles races destination creation and requires capture to
+// preserve an existing artifact instead of overwriting it.
 func TestCaptureNeverReplacesExistingOrRacedFiles(t *testing.T) {
 	c, e := synthetic(t)
 	dir := t.TempDir()

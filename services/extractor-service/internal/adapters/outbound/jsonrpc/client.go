@@ -1,3 +1,6 @@
+// client.go implements bounded JSON-RPC transport, attempt accounting, pacing and response
+// validation in the outbound adapter layer.
+
 package jsonrpc
 
 import (
@@ -24,10 +27,20 @@ import (
 )
 
 var (
-	ErrConfig           = errors.New("invalid RPC configuration")
-	ErrProtocol         = errors.New("invalid JSON-RPC response")
-	ErrTransport        = errors.New("RPC transport failed")
+	// ErrConfig signals invalid RPC configuration. Callers can match this category with errors.Is
+	// without parsing error text.
+	ErrConfig = errors.New("invalid RPC configuration")
+	// ErrProtocol signals invalid JSON-RPC response. Callers can match this category with errors.Is
+	// without parsing error text.
+	ErrProtocol = errors.New("invalid JSON-RPC response")
+	// ErrTransport signals RPC transport failed. Callers can match this category with errors.Is
+	// without parsing error text.
+	ErrTransport = errors.New("RPC transport failed")
+	// ErrResponseTooLarge signals RPC response size limit exceeded. Callers can match this category
+	// with errors.Is without parsing error text.
 	ErrResponseTooLarge = errors.New("RPC response size limit exceeded")
+	// ErrSnapshotTooLarge signals raw block snapshot size limit exceeded. Callers can match this
+	// category with errors.Is without parsing error text.
 	ErrSnapshotTooLarge = errors.New("raw block snapshot size limit exceeded")
 )
 
@@ -52,12 +65,19 @@ type Config struct {
 // HTTPError and RPCError expose numeric diagnostics, never provider text.
 type HTTPError struct{ Status int }
 
+// Error formats only the numeric HTTP status, never provider response text or the private
+// endpoint.
 func (e *HTTPError) Error() string { return fmt.Sprintf("RPC HTTP status %d", e.Status) }
 
+// RPCError retains only a numeric provider error code so errors cannot disclose response bodies or
+// private URLs.
 type RPCError struct{ Code int }
 
+// Error formats only the numeric JSON-RPC code, never the provider message or endpoint.
 func (e *RPCError) Error() string { return fmt.Sprintf("JSON-RPC error code %d", e.Code) }
 
+// Client owns HTTP transport, atomic request identity/budget and a mutex-protected pacing gate
+// shared by receipt workers.
 type Client struct {
 	config      Config
 	http        *http.Client
@@ -68,8 +88,12 @@ type Client struct {
 	nextRequest time.Time // protected by gate
 }
 
+// Compile-time interface assertion checks adapter/interface compatibility at compile time without
+// allocating runtime state.
 var _ outbound.BlockSource = (*Client)(nil)
 
+// New validates endpoint and RPC limits, wraps attempt accounting and disables redirects;
+// construction itself makes no requests.
 func New(config Config, client *http.Client, registries ...*metrics.Registry) (*Client, error) {
 	if config.ReceiptConcurrency == 0 {
 		config.ReceiptConcurrency = DefaultReceiptConcurrency
@@ -120,6 +144,8 @@ func New(config Config, client *http.Client, registries ...*metrics.Registry) (*
 	return c, nil
 }
 
+// ChainID queries and validates the provider chain against configured identity before source data
+// can be trusted.
 func (c *Client) ChainID(ctx context.Context) (domain.ChainID, error) {
 	raw, err := c.call(ctx, "eth_chainId", []any{})
 	if err != nil {
@@ -136,6 +162,8 @@ func (c *Client) ChainID(ctx context.Context) (domain.ChainID, error) {
 	return chain, nil
 }
 
+// Block acquires and validates every receipt plus the numbered block, returning no partial
+// extraction on failure and preserving raw result bytes.
 func (c *Client) Block(ctx context.Context, number uint64) (domain.Extraction, error) {
 	var empty domain.Extraction
 	chain, err := c.ChainID(ctx)
@@ -168,6 +196,8 @@ func (c *Client) Block(ctx context.Context, number uint64) (domain.Extraction, e
 	return extraction, nil
 }
 
+// wait waits for a retry or pacing delay with context cancellation; nonpositive delays do not
+// start a timer.
 func wait(ctx context.Context, delay time.Duration) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -210,6 +240,9 @@ func (c *Client) pace(ctx context.Context) error {
 		}
 	}
 }
+
+// cooldown extends the client's shared next-request time so a rate-limit response delays
+// concurrent callers too.
 func (c *Client) cooldown(delay time.Duration) {
 	if delay <= 0 {
 		return
@@ -222,6 +255,8 @@ func (c *Client) cooldown(delay time.Duration) {
 	}
 }
 
+// call performs bounded logical RPC attempts, classifying provider failures and respecting
+// context, pacing and Retry-After.
 func (c *Client) call(ctx context.Context, method string, params []any) (json.RawMessage, error) {
 	id := c.id.Add(1)
 	payload, err := json.Marshal(struct {
@@ -278,6 +313,8 @@ func (c *Client) call(ctx context.Context, method string, params []any) (json.Ra
 	}
 }
 
+// safeTransportError preserves cancellation/deadline identity while removing endpoint-bearing
+// transport error details.
 func safeTransportError(ctx context.Context, err error) error {
 	if errors.Is(err, outbound.ErrRPCBudgetExceeded) {
 		return outbound.ErrRPCBudgetExceeded
@@ -295,6 +332,8 @@ func safeTransportError(ctx context.Context, err error) error {
 	return ErrTransport
 }
 
+// attempt encodes one JSON-RPC request, enforces response limits and validates its envelope before
+// exposing result bytes.
 func (c *Client) attempt(parent context.Context, payload []byte, id uint64) (json.RawMessage, bool, time.Duration, error) {
 	ctx, cancel := context.WithTimeout(parent, c.config.RequestTimeout)
 	defer cancel()
@@ -375,6 +414,7 @@ func (c *Client) attempt(parent context.Context, payload []byte, id uint64) (jso
 	return result, false, 0, nil
 }
 
+// retryDelay computes the bounded retry delay, including server Retry-After when usable.
 func retryDelay(value string, now time.Time) time.Duration {
 	if seconds, err := strconv.ParseInt(value, 10, 64); err == nil && seconds >= 0 {
 		if seconds > math.MaxInt64/int64(time.Second) {
@@ -392,8 +432,12 @@ func retryDelay(value string, now time.Time) time.Duration {
 // It is process-local, not a provider billing or wire-delivery counter.
 func (c *Client) Requests() uint64 { return c.requests.Load() }
 
+// rpcRetryKey marks a subsequent logical-call attempt in context for transport-level retry
+// accounting.
 type rpcRetryKey struct{}
 
+// reserveRequest atomically consumes one shared HTTP-attempt allowance; exhaustion or cancellation
+// prevents dispatch.
 func (c *Client) reserveRequest(ctx context.Context) error {
 	for {
 		if err := ctx.Err(); err != nil {
@@ -420,6 +464,8 @@ type attemptTransport struct {
 	next   http.RoundTripper
 }
 
+// RoundTrip reserves shared pacing and attempt budget immediately before the underlying HTTP
+// transport can dispatch.
 func (t attemptTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	if err := t.client.reserveRequest(r.Context()); err != nil {
 		return nil, err

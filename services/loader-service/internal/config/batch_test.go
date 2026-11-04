@@ -1,3 +1,6 @@
+// batch_test.go exercises bounded pgx INSERT grouping and batch-result cleanup inside a block
+// transaction in the startup configuration boundary.
+
 package config_test
 
 import (
@@ -5,6 +8,8 @@ import (
 	"testing"
 )
 
+// TestSQLBatchSize checks direct mode, default and maximum batch settings and rejects unsupported
+// values before startup.
 func TestSQLBatchSize(t *testing.T) {
 	setDefaults(t)
 	for _, c := range []struct {

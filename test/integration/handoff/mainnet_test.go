@@ -1,5 +1,8 @@
 //go:build postgresintegration
 
+// mainnet_test.go exercises manifest-verified authentic offline fixture runner configuration in
+// the offline test and diagnostic infrastructure.
+
 package handoff_test
 
 import (
@@ -15,6 +18,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// realInput retains authentic raw bytes/provenance and independently decoded records for
+// persistence comparison.
 type realInput struct {
 	RawBlock                     []byte    `json:"raw_block_base64"`
 	RawReceipts                  [][]byte  `json:"raw_receipts_base64"`
@@ -24,6 +29,8 @@ type realInput struct {
 	transactions, receipts, logs []map[string]any
 }
 
+// readRealInput loads and verifies the explicitly selected private artifact before authentic
+// offline assertions.
 func readRealInput(t *testing.T) *realInput {
 	t.Helper()
 	path := os.Getenv("REAL_FIXTURE_ARTIFACT")
@@ -76,6 +83,9 @@ func readRealInput(t *testing.T) *realInput {
 	}
 	return r
 }
+
+// assertRealPipeline compares original raw/normalized fields, queue state and correlation after
+// both real gRPC hops complete.
 func assertRealPipeline(t *testing.T, r *realInput, ex, tr, lo *pgxpool.Pool, raw *rawProxy, normalized *transformedProxy) {
 	t.Helper()
 	number, err := sqlValue(r.block["number"], "s")

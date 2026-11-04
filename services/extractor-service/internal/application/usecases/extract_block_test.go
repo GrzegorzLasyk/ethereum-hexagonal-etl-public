@@ -1,3 +1,6 @@
+// extract_block_test.go exercises single-block validation and the source/Outbox/checkpoint commit
+// boundary in the application orchestration layer.
+
 package usecases_test
 
 import (
@@ -14,8 +17,12 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
 
+// testFailure signals injected failure. Callers can match this category with errors.Is without
+// parsing error text.
 var testFailure = errors.New("injected failure")
 
+// fakeSource provides controlled complete source observations and failures at the block-source
+// port.
 type fakeSource struct {
 	chain                  domain.ChainID
 	data                   domain.Extraction
@@ -25,6 +32,7 @@ type fakeSource struct {
 	contexts               []context.Context
 }
 
+// ChainID returns the fake provider chain for explicit source-identity checks.
 func (s *fakeSource) ChainID(ctx context.Context) (domain.ChainID, error) {
 	s.chainCalls++
 	s.contexts = append(s.contexts, ctx)
@@ -34,6 +42,8 @@ func (s *fakeSource) ChainID(ctx context.Context) (domain.ChainID, error) {
 	return s.chain, s.chainErr
 }
 
+// Block returns or fails a controlled complete source snapshot so acquisition/persistence
+// boundaries can be exercised.
 func (s *fakeSource) Block(ctx context.Context, _ uint64) (domain.Extraction, error) {
 	s.blockCalls++
 	s.contexts = append(s.contexts, ctx)
@@ -53,6 +63,7 @@ type fakeStore struct {
 	contexts                                 []context.Context
 }
 
+// Checkpoint reads simulated durable progress for extraction/cursor assertions.
 func (s *fakeStore) Checkpoint(ctx context.Context, _ domain.ChainID) (*domain.Checkpoint, error) {
 	s.reads++
 	s.contexts = append(s.contexts, ctx)
@@ -67,6 +78,8 @@ func (s *fakeStore) Checkpoint(ctx context.Context, _ domain.ChainID) (*domain.C
 	return result, s.checkpointErr
 }
 
+// Commit simulates the application persistence boundary and records committed identity/progress
+// for assertions; it is not a production database.
 func (s *fakeStore) Commit(ctx context.Context, command outbound.CommitExtraction) (outbound.CommitResult, error) {
 	s.commits++
 	s.contexts = append(s.contexts, ctx)
@@ -100,6 +113,8 @@ func (s *fakeStore) Commit(ctx context.Context, command outbound.CommitExtractio
 	return outbound.CommitResult{}, s.afterCommitErr
 }
 
+// extractionAt builds a complete deterministic extraction for boundary tests; its
+// hashes/provenance are synthetic.
 func extractionAt(number uint64) domain.Extraction {
 	id := domain.BlockID{ChainID: "1", Number: number, Hash: domain.Hash{byte(number + 1)}}
 	tx := domain.Transaction{Block: id, Hash: domain.Hash{42}, Index: 0}
@@ -117,6 +132,8 @@ func extractionAt(number uint64) domain.Extraction {
 	}
 }
 
+// newUseCase wires the real application use case to controlled test ports and fails immediately on
+// invalid setup.
 func newUseCase(t *testing.T, source *fakeSource, store *fakeStore) *usecases.ExtractBlock {
 	t.Helper()
 	u, err := usecases.NewExtractBlock("1", 10, source, store)
@@ -126,10 +143,14 @@ func newUseCase(t *testing.T, source *fakeSource, store *fakeStore) *usecases.Ex
 	return u
 }
 
+// request builds a valid deterministic application/transport request so one invariant can be
+// varied per case.
 func request(number uint64) inbound.ExtractBlockRequest {
 	return inbound.ExtractBlockRequest{ChainID: "1", Number: number}
 }
 
+// TestExtractBlockErrors injects invalid request/source/storage outcomes and checks the atomic
+// persistence boundary is not crossed prematurely.
 func TestExtractBlockErrors(t *testing.T) {
 	tests := []struct {
 		name             string
@@ -199,6 +220,8 @@ func TestExtractBlockErrors(t *testing.T) {
 	}
 }
 
+// TestCancellationBoundaries injects cancellation at source/storage boundaries to distinguish
+// uncommitted work from an acknowledged durable commit.
 func TestCancellationBoundaries(t *testing.T) {
 	for _, stage := range []string{"before request", "source identity", "checkpoint", "fetch", "commit", "after commit"} {
 		t.Run(stage, func(t *testing.T) {
@@ -248,6 +271,8 @@ func TestCancellationBoundaries(t *testing.T) {
 	}
 }
 
+// TestExtractionRecoveryAndIdempotency retries complete identities after simulated failure and
+// verifies stable stored progress and duplicate handling.
 func TestExtractionRecoveryAndIdempotency(t *testing.T) {
 	for _, failure := range []string{"none", "before commit", "ambiguous commit"} {
 		t.Run(failure, func(t *testing.T) {
@@ -310,6 +335,8 @@ func TestExtractionRecoveryAndIdempotency(t *testing.T) {
 	}
 }
 
+// TestNewExtractBlock checks chain/start and dependency validation at construction without
+// performing acquisition.
 func TestNewExtractBlock(t *testing.T) {
 	for _, tt := range []struct {
 		name   string

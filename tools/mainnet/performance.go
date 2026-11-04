@@ -1,3 +1,6 @@
+// performance.go implements private operator performance-setting validation without automatic
+// tuning in the local operator tooling.
+
 package main
 
 import (
@@ -21,6 +24,9 @@ func performanceKey(key string) bool {
 	}
 	return false
 }
+
+// validatePerformance checks optional private resource overrides against service bounds and cross-
+// setting constraints.
 func validatePerformance(c map[string]string) error {
 	for key, raw := range c {
 		if !performanceKey(key) {

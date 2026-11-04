@@ -1,5 +1,8 @@
 //go:build postgresintegration
 
+// integration_test.go exercises real owning-role PostgreSQL transactions, claims and failure
+// recovery in the outbound adapter layer.
+
 package postgres
 
 import (
@@ -28,6 +31,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// integrationPool opens the explicitly configured integration connection and verifies the expected
+// role before test SQL.
 func integrationPool(t *testing.T, variable, role string) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv(variable)
@@ -58,6 +63,9 @@ func integrationPool(t *testing.T, variable, role string) *pgxpool.Pool {
 	}
 	return p
 }
+
+// testEvent builds a valid deterministic application/transport request so one invariant can be
+// varied per case.
 func testEvent(t *testing.T) inbound.AcceptRawBlockRequest {
 	t.Helper()
 	read := func(name string) []byte {
@@ -74,17 +82,23 @@ func testEvent(t *testing.T) inbound.AcceptRawBlockRequest {
 	}
 	return inbound.AcceptRawBlockRequest{EventID: fmt.Sprintf("raw-block/v1/1/20000000/%x", h), EventVersion: 1, PayloadVersion: 1, Block: inbound.BlockIdentity{ChainID: "1", Number: 20000000, Hash: h, ParentHash: p}, Provider: "fixture", ExtractedAt: time.Unix(100, 123).UTC(), RawBlock: read("block.json"), RawReceipts: [][]byte{read("receipt_0.json"), read("receipt_1.json")}}
 }
+
+// wire loads the controlled normalized/raw payload used by persistence integration assertions.
 func wire(r inbound.AcceptRawBlockRequest) *etlv1.SubmitRawBlockRequest {
 	return &etlv1.SubmitRawBlockRequest{Metadata: &etlv1.EventMetadata{EventId: r.EventID, EventVersion: 1, PayloadVersion: 1,
 		Block: &etlv1.BlockIdentity{ChainId: r.Block.ChainID, Number: proto.Uint64(r.Block.Number), BlockHash: r.Block.Hash[:], ParentHash: r.Block.ParentHash[:]}, Provider: r.Provider, ExtractedAt: timestamppb.New(r.ExtractedAt)},
 		Payload: &etlv1.RawBlockPayload{BlockJson: r.RawBlock, Receipts: &etlv1.RawReceipts{Json: r.RawReceipts}}}
 }
 
+// faultDB wraps real database transactions to inject an uncertain acceptance/completion commit
+// outcome.
 type faultDB struct {
 	database
 	after bool
 }
 
+// BeginTx wraps or returns the controlled test transaction so commit/failure boundaries can be
+// injected without changing production code.
 func (d faultDB) BeginTx(ctx context.Context, o pgx.TxOptions) (pgx.Tx, error) {
 	tx, err := d.database.BeginTx(ctx, o)
 	if err != nil {
@@ -93,11 +107,15 @@ func (d faultDB) BeginTx(ctx context.Context, o pgx.TxOptions) (pgx.Tx, error) {
 	return faultTx{tx, d.after}, nil
 }
 
+// faultTx can fail before or after a real commit so durable state and reported error can be
+// checked separately.
 type faultTx struct {
 	pgx.Tx
 	after bool
 }
 
+// Commit injects a controlled lost/failed commit acknowledgement around the real transaction to
+// test explicit outcome uncertainty.
 func (tx faultTx) Commit(ctx context.Context) error {
 	if tx.after {
 		if err := tx.Tx.Commit(ctx); err != nil {
@@ -107,6 +125,8 @@ func (tx faultTx) Commit(ctx context.Context) error {
 	return errors.New("simulated commit acknowledgement loss")
 }
 
+// TestPostgresIntegration runs owning-role PostgreSQL persistence and failure scenarios only with
+// explicit integration database configuration.
 func TestPostgresIntegration(t *testing.T) {
 	runtime := integrationPool(t, "TRANSFORMER_TEST_DATABASE_URL", "transformer_runtime")
 	owner := integrationPool(t, "TRANSFORMER_TEST_MIGRATOR_URL", "transformer_migrator")

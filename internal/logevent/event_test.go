@@ -1,3 +1,6 @@
+// event_test.go exercises the fixed structured-log vocabulary and safe correlated error reporting
+// in the shared technical support layer, outside service domains.
+
 package logevent
 
 import (
@@ -9,10 +12,16 @@ import (
 	"time"
 )
 
+// secretError fails if its sensitive error text is rendered, making redaction violations
+// observable.
 type secretError struct{}
 
+// Error panics if formatting reaches the underlying error, proving safe logging must classify
+// without rendering sensitive details.
 func (secretError) Error() string { panic("must never format underlying error") }
 
+// TestRedactionAndExistingIdentity checks the fixed log vocabulary keeps valid correlation while
+// excluding arbitrary sensitive fields/error text.
 func TestRedactionAndExistingIdentity(t *testing.T) {
 	raw := "raw-block/v1/1/0/" + strings.Repeat("a", 64)
 	transformed := strings.Replace(raw, "raw-block", "transformed-block", 1)

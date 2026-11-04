@@ -1,5 +1,8 @@
 //go:build live
 
+// live_test.go exercises explicitly gated live smoke; ordinary tests and CI do not acquire Mainnet
+// data in the outbound adapter layer.
+
 package jsonrpc
 
 import (

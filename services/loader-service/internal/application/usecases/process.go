@@ -1,3 +1,6 @@
+// process.go implements Inbox processing, validation and bounded failure orchestration in the
+// application orchestration layer.
+
 package usecases
 
 import (
@@ -12,18 +15,25 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/domain"
 )
 
+// Process coordinates a claimed Inbox item, codecs and atomic completion with bounded retry
+// classification.
 type Process struct {
 	queue        outbound.Queue
 	decoder      outbound.Decoder
 	initial, max time.Duration
 }
 
+// NewProcess validates the queue/codec ports and backoff bounds before constructing an
+// asynchronous processing use case.
 func NewProcess(q outbound.Queue, d outbound.Decoder, initial, max time.Duration) (*Process, error) {
 	if q == nil || d == nil || initial <= 0 || max < initial {
 		return nil, fmt.Errorf("invalid processing configuration")
 	}
 	return &Process{q, d, initial, max}, nil
 }
+
+// ProcessOne claims and processes one Inbox item, returning its identity/outcome; ambiguous
+// completion or a lost lease must not be followed by a failure mutation.
 func (u *Process) ProcessOne(ctx context.Context) (inbound.ProcessResult, error) {
 	item, err := u.queue.Claim(ctx)
 	if err != nil {
@@ -61,6 +71,9 @@ func (u *Process) ProcessOne(ctx context.Context) (inbound.ProcessResult, error)
 	}
 	return progress, nil
 }
+
+// decode decodes the normalized document, validates envelope/provenance binding and checks
+// cancellation before persistence.
 func (u *Process) decode(ctx context.Context, r inbound.AcceptTransformedBlockRequest) (domain.Document, error) {
 	doc, err := u.decoder.Decode(ctx, r.PayloadJSON)
 	if err != nil {
@@ -75,6 +88,8 @@ func (u *Process) decode(ctx context.Context, r inbound.AcceptTransformedBlockRe
 	return doc, nil
 }
 
+// classify separates permanent invalid/incomplete/identity failures from transient processing
+// errors using sentinel identities.
 func classify(err error) outbound.Failure {
 	for _, entry := range []struct {
 		err  error
@@ -88,6 +103,8 @@ func classify(err error) outbound.Failure {
 	}
 	return outbound.Failure{Code: "transient"}
 }
+
+// backoff calculates bounded exponential delay with jitter from the durable attempt number.
 func (u *Process) backoff(attempt int) time.Duration {
 	delay := u.initial
 	for i := 1; i < attempt && delay < u.max; i++ {

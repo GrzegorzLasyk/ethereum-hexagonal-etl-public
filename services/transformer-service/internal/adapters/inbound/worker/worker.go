@@ -1,3 +1,8 @@
+// worker.go implements bounded application polling with cancellation, progress logging and worker
+// joining in the inbound adapter layer.
+
+// Package worker provides bounded application polling with cancellation, progress logging and
+// worker joining in the inbound adapter layer.
 package worker
 
 import (
@@ -13,6 +18,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/application/ports/inbound"
 )
 
+// Worker owns bounded polling/concurrency policy around an injected application operation and its
+// logger/metrics.
 type Worker struct {
 	metrics       *metrics.Registry
 	processor     inbound.Processor
@@ -21,6 +28,8 @@ type Worker struct {
 	poll, timeout time.Duration
 }
 
+// New validates worker counts and polling/deadline policy before retaining the injected
+// application operation.
 func New(p inbound.Processor, logger *slog.Logger, concurrency int, poll, timeout time.Duration, registries ...*metrics.Registry) (*Worker, error) {
 	if p == nil || logger == nil || concurrency < 1 || concurrency > 8 || poll <= 0 || timeout <= 0 {
 		return nil, fmt.Errorf("invalid worker configuration")

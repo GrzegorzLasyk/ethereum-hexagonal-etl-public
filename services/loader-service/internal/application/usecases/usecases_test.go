@@ -1,3 +1,6 @@
+// usecases_test.go exercises durable acceptance/processing, provenance and ambiguous outcomes in
+// the application orchestration layer.
+
 package usecases
 
 import (
@@ -14,6 +17,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/domain"
 )
 
+// fakeStore captures proposed acceptance/completion state and injects port failures without
+// PostgreSQL.
 type fakeStore struct {
 	item                                      *outbound.Item
 	duplicate                                 bool
@@ -24,6 +29,8 @@ type fakeStore struct {
 	afterAccept, afterComplete                func()
 }
 
+// Accept returns controlled durable duplicate/new/error outcomes and records whether acceptance
+// was invoked.
 func (s *fakeStore) Accept(context.Context, inbound.AcceptTransformedBlockRequest) (bool, error) {
 	s.accepted++
 	if s.afterAccept != nil {
@@ -31,7 +38,12 @@ func (s *fakeStore) Accept(context.Context, inbound.AcceptTransformedBlockReques
 	}
 	return s.duplicate, s.acceptErr
 }
+
+// Claim returns the controlled claimed item or storage error without a database.
 func (s *fakeStore) Claim(context.Context) (*outbound.Item, error) { return s.item, s.claimErr }
+
+// Complete records the proposed result and returns the configured completion outcome, including
+// ambiguity or lease loss.
 func (s *fakeStore) Complete(_ context.Context, _ outbound.Item, d domain.Document) error {
 	s.completed = &d
 	if s.afterComplete != nil {
@@ -39,10 +51,16 @@ func (s *fakeStore) Complete(_ context.Context, _ outbound.Item, d domain.Docume
 	}
 	return s.completeErr
 }
+
+// Fail captures the safe processing failure so tests can detect forbidden mutation after uncertain
+// completion.
 func (s *fakeStore) Fail(_ context.Context, _ outbound.Item, f outbound.Failure) error {
 	s.failure = &f
 	return s.failErr
 }
+
+// event builds a valid deterministic application/transport request so one invariant can be varied
+// per case.
 func event(t *testing.T) inbound.AcceptTransformedBlockRequest {
 	t.Helper()
 	b, e := os.ReadFile("../../adapters/outbound/jsondocument/testdata/transformed_v1.json")
@@ -56,6 +74,9 @@ func event(t *testing.T) inbound.AcceptTransformedBlockRequest {
 	}
 	return inbound.AcceptTransformedBlockRequest{EventID: fmt.Sprintf("transformed-block/v1/1/20000000/%x", hash), SourceEventID: fmt.Sprintf("raw-block/v1/1/20000000/%x", hash), EventVersion: 1, PayloadVersion: 1, Block: inbound.BlockIdentity{ChainID: "1", Number: 20000000, Hash: hash, ParentHash: parent}, Provider: "fixture", ExtractedAt: time.Unix(100, 123), TransformedAt: time.Unix(200, 456), PayloadJSON: b}
 }
+
+// processor wires the real application use case to controlled test ports and fails immediately on
+// invalid setup.
 func processor(t *testing.T, s *fakeStore) *Process {
 	t.Helper()
 	p, e := NewProcess(s, jsondocument.Decoder{}, time.Millisecond, time.Second)
@@ -64,6 +85,9 @@ func processor(t *testing.T, s *fakeStore) *Process {
 	}
 	return p
 }
+
+// TestAcceptanceDurableOutcomes checks that the acceptance result reflects committed/new versus
+// identical stored input and propagates storage failure.
 func TestAcceptanceDurableOutcomes(t *testing.T) {
 	for _, duplicate := range []bool{false, true} {
 		ctx, cancel := context.WithCancel(t.Context())
@@ -88,6 +112,9 @@ func TestAcceptanceDurableOutcomes(t *testing.T) {
 		}
 	}
 }
+
+// TestEnvelopeRejectedBeforeIO checks invalid metadata/payload boundaries before the durable
+// storage port can be invoked.
 func TestEnvelopeRejectedBeforeIO(t *testing.T) {
 	for _, change := range []func(*inbound.AcceptTransformedBlockRequest){
 		func(r *inbound.AcceptTransformedBlockRequest) { r.EventID = "bad" }, func(r *inbound.AcceptTransformedBlockRequest) { r.SourceEventID = "bad" },
@@ -114,6 +141,9 @@ func TestEnvelopeRejectedBeforeIO(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+// TestProcessingAndProvenanceBinding checks decoded document identity and original source metadata
+// agree with the accepted envelope.
 func TestProcessingAndProvenanceBinding(t *testing.T) {
 	for _, tt := range []struct {
 		name   string
@@ -151,6 +181,9 @@ func TestProcessingAndProvenanceBinding(t *testing.T) {
 		})
 	}
 }
+
+// TestRetryCancellationAndAmbiguousCommit distinguishes retryable processing failure from
+// cancellation or uncertain completion that must not receive a second mutation.
 func TestRetryCancellationAndAmbiguousCommit(t *testing.T) {
 	for _, failure := range []error{inbound.ErrUnavailable, inbound.ErrConflict, outbound.ErrCommitUnknown, outbound.ErrLeaseLost} {
 		s := &fakeStore{item: &outbound.Item{Event: event(t), Attempt: 2, MaxAttempts: 3}, completeErr: failure}

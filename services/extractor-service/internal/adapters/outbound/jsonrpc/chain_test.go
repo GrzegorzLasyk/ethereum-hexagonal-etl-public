@@ -1,3 +1,6 @@
+// chain_test.go exercises provider head/header observations for ordered extraction and recovery in
+// the outbound adapter layer.
+
 package jsonrpc
 
 import (
@@ -15,6 +18,7 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
 
+// TestChainObservations checks numbered/head observation mapping through controlled RPC responses.
 func TestChainObservations(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -69,6 +73,8 @@ func TestChainObservations(t *testing.T) {
 	}
 }
 
+// TestHeaderRejectsUnavailableOrInvalidIdentity rejects null or malformed numbered headers instead
+// of fabricating usable ancestry.
 func TestHeaderRejectsUnavailableOrInvalidIdentity(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -120,6 +126,8 @@ func TestHeaderRejectsUnavailableOrInvalidIdentity(t *testing.T) {
 	}
 }
 
+// TestHeadRechecksChainAndPropagatesCancellation requires head observation to preserve
+// chain/cancellation validation across its RPC calls.
 func TestHeadRechecksChainAndPropagatesCancellation(t *testing.T) {
 	raw := fixture(t, "block")
 	var checks atomic.Int32

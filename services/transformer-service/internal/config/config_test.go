@@ -1,3 +1,6 @@
+// config_test.go exercises validated environment configuration and conservative startup limits in
+// the startup configuration boundary.
+
 package config_test
 
 import (
@@ -8,6 +11,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/config"
 )
 
+// TestLoad checks required identities and environment parsing fail safely before startup with
+// invalid settings.
 func TestLoad(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -49,6 +54,8 @@ func TestLoad(t *testing.T) {
 	}
 }
 
+// setDefaults sets test-scoped environment values so cases do not depend on the caller's startup
+// configuration.
 func setDefaults(t *testing.T) {
 	t.Helper()
 	for _, name := range []string{
@@ -62,6 +69,8 @@ func setDefaults(t *testing.T) {
 	t.Setenv("TRANSFORMER_CHAIN_ID", "1")
 }
 
+// TestProcessingConfiguration checks worker/attempt limits and requires lease duration to exceed
+// the processing deadline.
 func TestProcessingConfiguration(t *testing.T) {
 	setDefaults(t)
 	cfg, err := config.Load()

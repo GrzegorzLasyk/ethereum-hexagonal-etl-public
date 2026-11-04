@@ -1,3 +1,8 @@
+// integration_test.go checks missing/skipped integration PASS markers through a controlled shell
+// runner in the CI orchestration tests; it does not open a database or start Docker.
+
+// Package ci_test checks required integration-gate execution markers with controlled child
+// commands; these tests do not start PostgreSQL.
 package ci_test
 
 import (
@@ -11,6 +16,8 @@ import (
 	"time"
 )
 
+// TestIntegrationGate checks the CI runner cannot silently skip required execution.
+//
 // Exercise the real shell gate with a fake runner: no Docker or live RPC.
 func TestIntegrationGate(t *testing.T) {
 	_, file, _, ok := runtime.Caller(0)

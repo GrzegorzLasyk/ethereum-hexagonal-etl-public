@@ -1,3 +1,6 @@
+// records.go implements exact domain-to-SQL field mappings for normalized block records in the
+// outbound adapter layer.
+
 package postgres
 
 import (
@@ -8,6 +11,7 @@ import (
 	"strconv"
 )
 
+// hashArray maps fixed-width domain hashes to byte slices for PostgreSQL array parameters.
 func hashArray(values []domain.Hash) [][]byte {
 	result := make([][]byte, 0, len(values))
 	for _, value := range values {
@@ -15,13 +19,22 @@ func hashArray(values []domain.Hash) [][]byte {
 	}
 	return result
 }
+
+// optionalValue converts absent/null domain values to SQL NULL while retaining supplied values for
+// the record mapping.
 func optionalValue[T any](value domain.Optional[T], convert func(T) any) any {
 	if !value.HasValue() {
 		return nil
 	}
 	return convert(value.Value)
 }
+
+// hexData encodes bytes as prefixed hex for JSON fields that preserve Ethereum data
+// representation.
 func hexData(b []byte) string { return "0x" + hex.EncodeToString(b) }
+
+// accessJSON encodes the modeled access list for its JSON persistence column without reordering
+// entries.
 func accessJSON(values []domain.Access) (string, error) {
 	rows := make([]map[string]any, 0, len(values))
 	for _, a := range values {
@@ -34,6 +47,9 @@ func accessJSON(values []domain.Access) (string, error) {
 	b, err := json.Marshal(rows)
 	return string(b), err
 }
+
+// authorizationJSON encodes modeled authorization tuples for the corresponding JSON persistence
+// column.
 func authorizationJSON(values []domain.Authorization) (string, error) {
 	rows := make([]map[string]any, 0, len(values))
 	for _, a := range values {
@@ -43,6 +59,8 @@ func authorizationJSON(values []domain.Authorization) (string, error) {
 	return string(b), err
 }
 
+// insertBlock maps one validated block into the existing parameterized INSERT through the caller-
+// owned executor.
 func insertBlock(ctx context.Context, tx recordExecutor, chain domain.ChainID, v domain.Block, eventID string) error {
 
 	present := []string{}
@@ -99,6 +117,8 @@ func insertBlock(ctx context.Context, tx recordExecutor, chain domain.ChainID, v
 	return dbErrorOrNil(err)
 }
 
+// insertTransaction maps one transaction, preserving full block identity and optional numeric/JSON
+// values, into the block transaction.
 func insertTransaction(ctx context.Context, tx recordExecutor, chain domain.ChainID, v domain.Transaction) error {
 
 	present := []string{}
@@ -183,6 +203,8 @@ func insertTransaction(ctx context.Context, tx recordExecutor, chain domain.Chai
 	return dbErrorOrNil(err)
 }
 
+// insertReceipt maps the matching transaction's receipt without losing root/status or recipient
+// distinctions.
 func insertReceipt(ctx context.Context, tx recordExecutor, chain domain.ChainID, v domain.Receipt) error {
 
 	present := []string{}
@@ -232,6 +254,8 @@ func insertReceipt(ctx context.Context, tx recordExecutor, chain domain.ChainID,
 	return dbErrorOrNil(err)
 }
 
+// insertLog maps one ordered receipt log and its full observation identity into the block
+// transaction.
 func insertLog(ctx context.Context, tx recordExecutor, chain domain.ChainID, v domain.Log) error {
 
 	present := []string{}
@@ -257,6 +281,8 @@ func insertLog(ctx context.Context, tx recordExecutor, chain domain.ChainID, v d
 	return dbErrorOrNil(err)
 }
 
+// dbErrorOrNil leaves success unchanged and converts an execution failure to the adapter's safe
+// storage classification.
 func dbErrorOrNil(err error) error {
 	if err == nil {
 		return nil

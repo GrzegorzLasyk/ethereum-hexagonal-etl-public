@@ -1,3 +1,6 @@
+// handler.go implements owning-service status translation into shared metric exposition in the
+// inbound adapter layer.
+
 // Package metrics maps service-owned operational views to technical exposition.
 package metrics
 
@@ -8,6 +11,8 @@ import (
 	"net/http"
 )
 
+// Handler adapts the service's owning-schema status reader into shared metric exposition without
+// cross-schema queries.
 func Handler(reader outbound.StatusReader, registry *shared.Registry) http.Handler {
 	return registry.Handler(func(ctx context.Context) (shared.Snapshot, error) {
 		status, err := reader.ReadStatus(ctx)

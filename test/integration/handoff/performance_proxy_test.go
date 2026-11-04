@@ -1,5 +1,8 @@
 //go:build postgresintegration && perfbaseline
 
+// performance_proxy_test.go exercises gRPC byte/timing observation without changing ACK semantics
+// in the offline test and diagnostic infrastructure.
+
 package handoff_test
 
 import (
@@ -12,11 +15,14 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// meter synchronizes gRPC handoff counts, byte sizes and duration samples during a baseline.
 type meter struct {
 	mu    sync.Mutex
 	stats performance.RPC
 }
 
+// observe records one measured gRPC call's bytes, latency and outcome under test-observer
+// synchronization.
 func (m *meter) observe(start time.Time, size int, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -27,6 +33,8 @@ func (m *meter) observe(start time.Time, size int, err error) {
 	}
 	m.stats.Latency.Add(time.Since(start).Seconds())
 }
+
+// snapshot returns a synchronized copy of measured gRPC counts/latencies for reporting.
 func (m *meter) snapshot() performance.RPC {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -35,6 +43,7 @@ func (m *meter) snapshot() performance.RPC {
 	return v
 }
 
+// measuredRaw forwards raw test handoffs while retaining timing and duplicate-payload evidence.
 type measuredRaw struct {
 	etlv1.UnimplementedTransformerServiceServer
 	client etlv1.TransformerServiceClient
@@ -43,6 +52,8 @@ type measuredRaw struct {
 	last   *etlv1.SubmitRawBlockRequest
 }
 
+// SubmitRawBlock forwards the real test-local handoff while recording payload bytes, duration and
+// outcome without altering ACK semantics.
 func (p *measuredRaw) SubmitRawBlock(ctx context.Context, r *etlv1.SubmitRawBlockRequest) (*etlv1.SubmitRawBlockResponse, error) {
 	start := time.Now()
 	ack, err := p.client.SubmitRawBlock(ctx, r)
@@ -53,6 +64,8 @@ func (p *measuredRaw) SubmitRawBlock(ctx context.Context, r *etlv1.SubmitRawBloc
 	return ack, err
 }
 
+// measuredTransformed forwards transformed test handoffs while retaining timing and duplicate-
+// payload evidence.
 type measuredTransformed struct {
 	etlv1.UnimplementedLoaderServiceServer
 	client etlv1.LoaderServiceClient
@@ -61,6 +74,8 @@ type measuredTransformed struct {
 	last   *etlv1.SubmitTransformedBlockRequest
 }
 
+// SubmitTransformedBlock forwards the real test-local handoff while recording payload bytes,
+// duration and outcome without altering ACK semantics.
 func (p *measuredTransformed) SubmitTransformedBlock(ctx context.Context, r *etlv1.SubmitTransformedBlockRequest) (*etlv1.SubmitTransformedBlockResponse, error) {
 	start := time.Now()
 	ack, err := p.client.SubmitTransformedBlock(ctx, r)

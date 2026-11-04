@@ -1,3 +1,6 @@
+// performance_test.go exercises private operator performance-setting validation without automatic
+// tuning in the local operator tooling.
+
 package main
 
 import (
@@ -8,6 +11,8 @@ import (
 	"testing"
 )
 
+// TestPrivatePerformanceSettings checks validated Stage 14 resource overrides are accepted in the
+// private operator configuration.
 func TestPrivatePerformanceSettings(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mainnet.env")
 	if err := initialize(path); err != nil {

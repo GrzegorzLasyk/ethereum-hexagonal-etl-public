@@ -1,3 +1,8 @@
+// errors.go implements safe error-category mapping without payload or credential disclosure in the
+// service technical adapter layer.
+
+// Package logging provides safe error-category mapping without payload or credential disclosure in
+// the service technical adapter layer.
 package logging
 
 import (

@@ -1,3 +1,6 @@
+// admission_test.go exercises bounded receiver resources and reservation release in the startup
+// configuration boundary.
+
 package config_test
 
 import (
@@ -5,6 +8,8 @@ import (
 	"testing"
 )
 
+// TestAdmissionLimits checks supported resource ranges and incompatible message/reservation
+// combinations before startup.
 func TestAdmissionLimits(t *testing.T) {
 	setDefaults(t)
 	for _, key := range []string{"MAX_OUTSTANDING_EVENTS", "MAX_INCOMING_REQUESTS", "MAX_INFLIGHT_BYTES", "MAX_GRPC_CONNECTIONS", "DB_MAX_CONNECTIONS"} {

@@ -1,3 +1,6 @@
+// protocol_test.go exercises JSON-RPC envelope integrity and safe transport errors in the outbound
+// adapter layer.
+
 package jsonrpc
 
 import (
@@ -16,6 +19,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
 
+// TestInvalidEnvelopes checks malformed JSON-RPC envelope versions, identifiers and result/error
+// combinations fail acquisition.
 func TestInvalidEnvelopes(t *testing.T) {
 	for _, body := range []string{
 		`{`, `[]`, `null`,
@@ -43,13 +48,18 @@ func TestInvalidEnvelopes(t *testing.T) {
 	}
 }
 
+// failingTransport counts injected transport failures without making external HTTP requests.
 type failingTransport struct{ calls atomic.Int32 }
 
+// RoundTrip implements the test HTTP transport with controlled responses/failures; it never
+// selects a live Ethereum endpoint.
 func (f *failingTransport) RoundTrip(*http.Request) (*http.Response, error) {
 	f.calls.Add(1)
 	return nil, errors.New("private-secret in transport error")
 }
 
+// TestTransportFailureRedaction checks wrapped HTTP/transport failures preserve safe
+// classification without private URL details.
 func TestTransportFailureRedaction(t *testing.T) {
 	transport := &failingTransport{}
 	c, err := New(testConfig("https://example.com/v3/private-secret"), &http.Client{Transport: transport})
@@ -62,6 +72,8 @@ func TestTransportFailureRedaction(t *testing.T) {
 	}
 }
 
+// TestChainChangeDuringSnapshot changes the reported chain between RPC calls and rejects the
+// mixed-source snapshot.
 func TestChainChangeDuringSnapshot(t *testing.T) {
 	f := serveFixtures(t, fixture(t, "block"), [2][]byte{fixture(t, "receipt_0"), fixture(t, "receipt_1")})
 	var chainCalls atomic.Int32
@@ -88,6 +100,8 @@ func TestChainChangeDuringSnapshot(t *testing.T) {
 	}
 }
 
+// TestConcurrentRequestsHaveUniqueIDsAndPacing checks unique JSON-RPC request IDs and one pacing
+// gate under concurrent callers.
 func TestConcurrentRequestsHaveUniqueIDsAndPacing(t *testing.T) {
 	const count = 5
 	var mu sync.Mutex

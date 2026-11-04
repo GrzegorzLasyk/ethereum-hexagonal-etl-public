@@ -1,5 +1,8 @@
 //go:build postgresintegration && perfbaseline
 
+// performance_test.go exercises private operator performance-setting validation without automatic
+// tuning in the offline test and diagnostic infrastructure.
+
 package handoff_test
 
 import (
@@ -25,6 +28,8 @@ import (
 	"google.golang.org/grpc"
 )
 
+// baselineEnvironment builds isolated host-service settings for the selected worker/resource
+// scenario without enabling live RPC.
 func baselineEnvironment(service string) []string {
 	var env []string
 	for _, entry := range os.Environ() {
@@ -39,12 +44,17 @@ func baselineEnvironment(service string) []string {
 	}
 	return append(env, strings.ToUpper(service)+"_DATABASE_URL="+os.Getenv(strings.ToUpper(service)+"_TEST_DATABASE_URL"), strings.ToUpper(service)+"_CHAIN_ID=1", "LOG_LEVEL=INFO")
 }
+
+// baselinePort reserves a test-local port for one measured service/proxy endpoint.
 func baselinePort(t *testing.T) string {
 	l := reserve(t)
 	address := l.Addr().String()
 	l.Close()
 	return address
 }
+
+// scrape serves the metrics handler through a controlled HTTP recorder and returns its exposition
+// for assertions.
 func scrape(address, path string) (string, error) {
 	client := http.Client{Timeout: 2 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Get("http://" + address + path)
@@ -58,6 +68,9 @@ func scrape(address, path string) (string, error) {
 	}
 	return string(data), nil
 }
+
+// baselineSeedCommand builds the offline source invocation for initial acquisition or duplicate
+// replay without external transport.
 func baselineSeedCommand(t *testing.T, s performance.Scenario, duplicate bool) *exec.Cmd {
 	t.Helper()
 	name := "source"
@@ -71,6 +84,9 @@ func baselineSeedCommand(t *testing.T, s performance.Scenario, duplicate bool) *
 	}
 	return cmd
 }
+
+// TestPerformanceBaseline measures only a fully verified isolated offline pipeline and rejects
+// incomplete data before reporting throughput.
 func TestPerformanceBaseline(t *testing.T) {
 	s, err := performance.ReadScenario()
 	if err != nil || os.Getenv("HANDOFF_TEST_ISOLATED") != "1" {
@@ -306,6 +322,9 @@ func TestPerformanceBaseline(t *testing.T) {
 	}
 	t.Logf("baseline verified dataset=%s blocks=%d workers=%d seconds=%.6f blocks/s=%.3f transactions/s=%.3f", s.Dataset, s.Blocks, s.Workers, r.MeasuredSeconds, *r.BlocksPerSecond, *r.TransactionsPerSecond)
 }
+
+// addOperations imports process probe output into the baseline report and rejects missing/invalid
+// evidence.
 func addOperations(t *testing.T, r *performance.Report, service string, output []byte) {
 	scanner := bufio.NewScanner(bytes.NewReader(output))
 	scanner.Buffer(make([]byte, 4096), 1<<20)
@@ -334,6 +353,9 @@ func addOperations(t *testing.T, r *performance.Report, service string, output [
 		}
 	}
 }
+
+// postgresSample reads diagnostic PostgreSQL counters/WAL and owning pool state for a bounded
+// measurement snapshot.
 func postgresSample(t *testing.T, pools map[string]*pgxpool.Pool) map[string]any {
 	t.Helper()
 	out := map[string]any{}

@@ -1,3 +1,6 @@
+// limits.go implements approved gRPC payload/message ceilings and validation in the shared
+// technical support layer, outside service domains.
+
 package grpccontract
 
 import (
@@ -12,7 +15,10 @@ import (
 )
 
 const (
+	// MaxPayloadBytes is the ADR-approved aggregate raw/normalized payload ceiling in bytes.
 	MaxPayloadBytes = 64 << 20
+	// MaxMessageBytes is the ADR-approved protobuf message ceiling, including envelope and unknown
+	// fields.
 	MaxMessageBytes = 65 << 20
 )
 
@@ -23,10 +29,14 @@ type Limits struct {
 	MessageBytes int
 }
 
+// DefaultLimits returns the approved aggregate-payload and protobuf-message ceilings; deployment
+// may lower them.
 func DefaultLimits() Limits {
 	return Limits{PayloadBytes: MaxPayloadBytes, MessageBytes: MaxMessageBytes}
 }
 
+// Validate requires positive payload/message limits, message headroom and the approved upper
+// bounds.
 func (l Limits) Validate() error {
 	if l.PayloadBytes <= 0 || l.PayloadBytes > MaxPayloadBytes || l.MessageBytes <= l.PayloadBytes || l.MessageBytes > MaxMessageBytes {
 		return fmt.Errorf("require 0 < payload bytes <= 64 MiB and payload bytes < message bytes <= 65 MiB")
@@ -77,6 +87,7 @@ func (l Limits) CheckPayload(block []byte, receipts ...[]byte) error {
 	return nil
 }
 
+// payloadTooLarge returns the permanent transport size error without including payload bytes.
 func payloadTooLarge() error {
 	return status.Error(codes.ResourceExhausted, "payload exceeds configured byte limit")
 }

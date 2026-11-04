@@ -1,3 +1,6 @@
+// readiness_policy_test.go exercises migration/readiness policy consistency in the outbound
+// adapter layer.
+
 package postgres
 
 import (
@@ -8,6 +11,8 @@ import (
 	"testing"
 )
 
+// TestReadinessMigrationManifest compares readiness requirements with the owning migration
+// inventory to detect stale schema assumptions.
 func TestReadinessMigrationManifest(t *testing.T) {
 	files, err := filepath.Glob("../../../../../../migrations/extractor/*.sql")
 	if err != nil || len(files) != len(readinessPolicy.Migrations) {

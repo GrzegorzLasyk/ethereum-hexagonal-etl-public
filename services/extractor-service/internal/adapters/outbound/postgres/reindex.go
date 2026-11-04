@@ -1,3 +1,6 @@
+// reindex.go implements independent historical range cursors and original-event replay in the
+// outbound adapter layer.
+
 package postgres
 
 import (
@@ -10,10 +13,16 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// Compile-time interface assertion checks adapter/interface compatibility at compile time without
+// allocating runtime state.
 var _ outbound.ReindexStore = (*Store)(nil)
 
+// reindexSQL selects the independent historical range cursor without reading another service
+// schema.
 const reindexSQL = `SELECT start_number::text,end_number::text,last_number::text,last_hash FROM extractor.reindex_jobs WHERE chain_id=$1 AND operation_id=$2`
 
+// readReindex decodes the persisted independent range cursor, rejecting corrupt or incompatible
+// stored identity.
 func readReindex(row pgx.Row, chain domain.ChainID, id string) (outbound.ReindexState, error) {
 	var state outbound.ReindexState
 	var start, end string
@@ -41,6 +50,9 @@ func readReindex(row pgx.Row, chain domain.ChainID, id string) (outbound.Reindex
 	}
 	return state, nil
 }
+
+// OpenReindex creates or resumes a stable operation ID and range; conflicting arguments cannot
+// reuse the audit identity.
 func (s *Store) OpenReindex(ctx context.Context, r outbound.ReindexRequest) (outbound.ReindexState, error) {
 	var empty outbound.ReindexState
 	if domain.ValidateOperationID(r.ID) != nil || r.End < r.Start {
@@ -67,9 +79,14 @@ func (s *Store) OpenReindex(ctx context.Context, r outbound.ReindexRequest) (out
 	}
 	return state, nil
 }
+
+// sameID compares optional full block identities without collapsing an absent cursor into genesis.
 func sameID(a, b *domain.BlockID) bool {
 	return a == nil && b == nil || a != nil && b != nil && *a == *b
 }
+
+// CommitReindex atomically retains an observation/Outbox intent and advances only the reindex
+// cursor, not the active checkpoint.
 func (s *Store) CommitReindex(ctx context.Context, expected outbound.ReindexState, e domain.Extraction, limits domain.CapacityLimits) error {
 	if err := e.Validate(); err != nil {
 		return err
@@ -137,8 +154,12 @@ func (s *Store) CommitReindex(ctx context.Context, expected outbound.ReindexStat
 	return commitBranch(ctx, tx)
 }
 
+// Compile-time interface assertion checks adapter/interface compatibility at compile time without
+// allocating runtime state.
 var _ outbound.ReplayStore = (*Store)(nil)
 
+// Replay validates a replay request and grants an audited finite Outbox allowance while fencing
+// previous claims.
 func (s *Store) Replay(ctx context.Context, r outbound.ReplayRequest) error {
 	if domain.ValidateOperationID(r.ID) != nil || r.EventID == "" || r.Allowance < 1 || r.Allowance > 1000 {
 		return domain.ErrInvalidData

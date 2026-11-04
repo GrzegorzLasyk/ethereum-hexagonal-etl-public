@@ -1,3 +1,6 @@
+// dispatch_test.go exercises durable delivery coordination and retry policy in the application
+// orchestration layer.
+
 package usecases
 
 import (
@@ -9,6 +12,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/application/ports/outbound"
 )
 
+// deliveryFake records delivery claims, acknowledgement mutations and retry decisions at the
+// application boundary.
 type deliveryFake struct {
 	item                           *outbound.Delivery
 	claimErr, publishErr, retryErr error
@@ -16,22 +21,34 @@ type deliveryFake struct {
 	failure                        outbound.DeliveryFailure
 }
 
+// ClaimDelivery returns a controlled durable delivery item/error for dispatch policy tests.
 func (f *deliveryFake) ClaimDelivery(context.Context) (*outbound.Delivery, error) {
 	return f.item, f.claimErr
 }
+
+// Published records a simulated delivered-state mutation so tests can require an actual valid ACK
+// first.
 func (f *deliveryFake) Published(context.Context, outbound.Delivery) error {
 	f.published++
 	return f.publishErr
 }
+
+// RetryDelivery captures the classified failure/delay for durable retry and exhaustion assertions.
 func (f *deliveryFake) RetryDelivery(_ context.Context, _ outbound.Delivery, v outbound.DeliveryFailure) error {
 	f.retried++
 	f.failure = v
 	return f.retryErr
 }
 
+// publisherFunc adapts an injected callback to the outbound publication port.
 type publisherFunc func(context.Context, outbound.Publication) error
 
+// Publish delegates to the injected test callback, allowing controlled completion, blocking or
+// failure at the application port.
 func (f publisherFunc) Publish(c context.Context, p outbound.Publication) error { return f(c, p) }
+
+// TestDispatchAcknowledgementBoundary requires a verified remote acceptance before the durable
+// queue is marked delivered.
 func TestDispatchAcknowledgementBoundary(t *testing.T) {
 	for _, tc := range []struct {
 		name               string
@@ -77,6 +94,9 @@ func TestDispatchAcknowledgementBoundary(t *testing.T) {
 		})
 	}
 }
+
+// TestDispatchTimeoutCancellationExhaustionAndIdle checks durable dispatch outcomes when no work
+// exists, a call fails/cancels or finite attempts run out.
 func TestDispatchTimeoutCancellationExhaustionAndIdle(t *testing.T) {
 	f := &deliveryFake{item: &outbound.Delivery{Attempt: 3, MaxAttempts: 3}}
 	u, _ := NewDispatch(f, publisherFunc(func(c context.Context, _ outbound.Publication) error { <-c.Done(); return c.Err() }), time.Millisecond, time.Millisecond, time.Second)
@@ -106,6 +126,8 @@ func TestDispatchTimeoutCancellationExhaustionAndIdle(t *testing.T) {
 	}
 }
 
+// TestOverloadExhaustsDurableAllowance requires retryable capacity errors to obey finite Outbox
+// attempts instead of creating an infinite retry loop.
 func TestOverloadExhaustsDurableAllowance(t *testing.T) {
 	f := &deliveryFake{item: &outbound.Delivery{Attempt: 3, MaxAttempts: 3}}
 	u, e := NewDispatch(f, publisherFunc(func(context.Context, outbound.Publication) error { return outbound.ErrPublishOverloaded }), time.Second, time.Millisecond, time.Second)

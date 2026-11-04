@@ -1,3 +1,6 @@
+// sql.go implements owning-role diagnostic queries for complete pipeline verification in the
+// shared technical support layer, outside service domains.
+
 package etlverify
 
 import (

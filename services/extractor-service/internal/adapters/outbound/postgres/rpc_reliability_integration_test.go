@@ -1,5 +1,8 @@
 //go:build postgresintegration
 
+// rpc_reliability_integration_test.go exercises checkpoint preservation after source acquisition
+// failures in the outbound adapter layer.
+
 package postgres
 
 import (
@@ -25,6 +28,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// testRPCCheckpointPreservation injects local source errors/budget exhaustion and checks
+// PostgreSQL progress and Outbox stay at the last durable boundary.
 func testRPCCheckpointPreservation(t *testing.T, pool *pgxpool.Pool) {
 	ctx := t.Context()
 	store, err := New(pool, "1", 100)

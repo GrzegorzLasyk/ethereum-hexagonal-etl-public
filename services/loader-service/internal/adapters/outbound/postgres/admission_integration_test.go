@@ -1,5 +1,8 @@
 //go:build postgresintegration
 
+// admission_integration_test.go exercises concurrent durable admission, exact deduplication and
+// capacity release in the outbound adapter layer.
+
 package postgres
 
 import (
@@ -13,6 +16,8 @@ import (
 	"time"
 )
 
+// testAdmission contends real owning-role admission transactions and checks capacity, identical
+// duplicates and recovery.
 func testAdmission(t *testing.T, runtime, owner *pgxpool.Pool) {
 	ctx := t.Context()
 	clear := func() {

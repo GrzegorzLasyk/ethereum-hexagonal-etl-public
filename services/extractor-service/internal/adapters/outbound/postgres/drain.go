@@ -1,3 +1,6 @@
+// drain.go implements bounded verification of durable outgoing range delivery in the outbound
+// adapter layer.
+
 package postgres
 
 import (
@@ -8,8 +11,12 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
 
+// Compile-time interface assertion checks adapter/interface compatibility at compile time without
+// allocating runtime state.
 var _ outbound.RangeDeliveryReader = (*Store)(nil)
 
+// RangeDelivery checks active range coverage and durable Outbox delivery together; missing or
+// failed work cannot report completion.
 func (s *Store) RangeDelivery(ctx context.Context, start, end uint64) (outbound.RangeDelivery, error) {
 	if end < start {
 		return outbound.RangeDelivery{}, domain.ErrInvalidData

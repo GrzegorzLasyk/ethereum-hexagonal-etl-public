@@ -1,5 +1,8 @@
 //go:build postgresintegration
 
+// drain_integration_test.go exercises range delivery completion with retained failed/pending
+// events in the outbound adapter layer.
+
 package postgres
 
 import (
@@ -13,6 +16,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// testRangeDelivery checks complete, pending, failed and missing active-range Outbox state against
+// real owning-role PostgreSQL.
 func testRangeDelivery(t *testing.T, pool *pgxpool.Pool) {
 	s, err := New(pool, "134001", 42)
 	if err != nil {

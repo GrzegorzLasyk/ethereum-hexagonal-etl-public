@@ -1,5 +1,8 @@
 //go:build postgresintegration
 
+// readiness_integration_test.go exercises schema, privilege, timeout and recovery readiness
+// failures in PostgreSQL in the outbound adapter layer.
+
 package postgres
 
 import (
@@ -11,6 +14,8 @@ import (
 	"time"
 )
 
+// testReadiness mutates only disposable schema/privilege state to verify not-ready, timeout and
+// recovery behavior.
 func testReadiness(t *testing.T, runtime, owner *pgxpool.Pool) {
 	s, err := New(runtime, "1", 0)
 	if err != nil {

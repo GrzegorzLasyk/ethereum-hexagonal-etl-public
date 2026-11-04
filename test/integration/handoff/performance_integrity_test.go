@@ -1,5 +1,8 @@
 //go:build postgresintegration && perfbaseline
 
+// performance_integrity_test.go exercises complete raw/normalized/queue evidence before accepting
+// throughput in the offline test and diagnostic infrastructure.
+
 package handoff_test
 
 import (
@@ -18,6 +21,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// assertBaselineData requires complete raw bytes, ordered checkpoint, queues, normalized fields,
+// deduplication and retained history before throughput is accepted.
 func assertBaselineData(t *testing.T, s performance.Scenario, pools map[string]*pgxpool.Pool, seed *performance.Seed) {
 	t.Helper()
 	ex, tr, lo := pools["extractor"], pools["transformer"], pools["loader"]

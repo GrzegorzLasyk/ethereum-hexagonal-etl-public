@@ -1,3 +1,6 @@
+// logging_test.go exercises event correlation and secret/error redaction on success and failure in
+// the inbound adapter layer.
+
 package grpc
 
 import (
@@ -14,6 +17,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/application/ports/outbound"
 )
 
+// TestAcceptanceLogsDurableIdentityAndRedactsFailures checks that ACK and failure logs preserve
+// event correlation without copying sensitive input/error details.
 func TestAcceptanceLogsDurableIdentityAndRedactsFailures(t *testing.T) {
 	for _, tc := range []struct {
 		name, outcome, code string

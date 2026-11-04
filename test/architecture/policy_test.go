@@ -1,3 +1,6 @@
+// policy_test.go exercises negative examples for architecture import/schema inspection in the
+// offline test and diagnostic infrastructure.
+
 package architecture_test
 
 import (
@@ -8,6 +11,8 @@ import (
 	"testing"
 )
 
+// TestImportPolicyRejectsBoundaryViolations feeds forbidden dependency examples to the
+// architecture policy so an empty scan cannot falsely pass.
 func TestImportPolicyRejectsBoundaryViolations(t *testing.T) {
 	own := module + "/services/extractor-service/internal/"
 	for _, tc := range []struct {
@@ -46,6 +51,8 @@ func TestImportPolicyRejectsBoundaryViolations(t *testing.T) {
 	}
 }
 
+// TestSchemaPolicy feeds owning/foreign schema examples through the architecture rule without
+// querying a database.
 func TestSchemaPolicy(t *testing.T) {
 	for _, tc := range []struct {
 		sql     string
@@ -77,6 +84,8 @@ func TestSchemaPolicy(t *testing.T) {
 	}
 }
 
+// TestGoSchemaInspection exercises static SQL/schema inspection against controlled Go snippets,
+// including constructed strings.
 func TestGoSchemaInspection(t *testing.T) {
 	for _, tc := range []struct {
 		body    string

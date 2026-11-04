@@ -1,3 +1,6 @@
+// queue_test.go exercises persistence-port timing and outcome observations without changing queue
+// behavior in the outbound adapter layer.
+
 package metrics
 
 import (
@@ -11,16 +14,22 @@ import (
 	"testing"
 )
 
+// queueFake injects queue outcomes while recording calls for metrics decorator assertions.
 type queueFake struct {
 	outbound.Queue
 	err   error
 	calls int
 }
 
+// Complete records the proposed result and returns the configured completion outcome, including
+// ambiguity or lease loss.
 func (q *queueFake) Complete(context.Context, outbound.Item, domain.Document) error {
 	q.calls++
 	return q.err
 }
+
+// TestPersistenceOutcomeDoesNotChangeCommitSemantics checks the timing decorator preserves the
+// exact wrapped completion result, including ambiguity and lease loss.
 func TestPersistenceOutcomeDoesNotChangeCommitSemantics(t *testing.T) {
 	for _, tc := range []struct {
 		err     error

@@ -1,3 +1,6 @@
+// execution_test.go exercises live acquisition opt-in, finite range and request/time safety gates
+// in the startup configuration boundary.
+
 package config
 
 import (
@@ -6,6 +9,8 @@ import (
 	"time"
 )
 
+// TestMainnetExecutionSafety checks explicit live consent, finite range and whole-run/request
+// budgets before source construction.
 func TestMainnetExecutionSafety(t *testing.T) {
 	indexEnvironment(t)
 	for k, v := range map[string]string{
@@ -37,6 +42,8 @@ func TestMainnetExecutionSafety(t *testing.T) {
 	}
 }
 
+// TestBoundedMainnetReindexAndOfflineDrain checks that historical acquisition needs finite bounds
+// while drain can run without a live endpoint.
 func TestBoundedMainnetReindexAndOfflineDrain(t *testing.T) {
 	indexEnvironment(t)
 	for k, v := range map[string]string{"EXTRACTOR_ENVIRONMENT": "mainnet", "EXTRACTOR_MAINNET_OPT_IN": "true", "EXTRACTOR_MAX_RPC_REQUESTS": "100", "EXTRACTOR_RUN_TIMEOUT": "2m", "EXTRACTOR_RPC_URL": "https://example.invalid/private-secret", "EXTRACTOR_MODE": "reindex"} {

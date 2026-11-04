@@ -1,3 +1,6 @@
+// store.go implements durable acceptance, transactional state changes and safe database error
+// mapping in the outbound adapter layer.
+
 // Package postgres persists only Transformer-owned state using local transactions.
 package postgres
 
@@ -15,9 +18,16 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// database is the pgx operation subset used by the adapter and its fault-injection tests; it is
+// not an application port.
 type database interface {
+	// BeginTx starts an adapter-owned database transaction with the supplied options; the caller owns
+	// completion/rollback.
 	BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error)
 }
+
+// Store binds owning-schema persistence to explicit chain/lease/capacity settings; caller-owned
+// pools outlive its operations.
 type Store struct {
 	db          database
 	chain       domain.ChainID
@@ -26,9 +36,16 @@ type Store struct {
 	capacity    int
 }
 
+// Compile-time interface assertion checks adapter/interface compatibility at compile time without
+// allocating runtime state.
 var _ outbound.Inbox = (*Store)(nil)
+
+// Compile-time interface assertion checks adapter/interface compatibility at compile time without
+// allocating runtime state.
 var _ outbound.Queue = (*Store)(nil)
 
+// New validates owning-chain/storage policy and binds the caller-owned pool; construction does not
+// migrate or claim work.
 func New(pool *pgxpool.Pool, chain domain.ChainID, lease time.Duration, maxAttempts int, capacities ...int) (*Store, error) {
 	if pool == nil || !chain.Valid() || lease < time.Millisecond || lease > 24*time.Hour || maxAttempts < 1 || maxAttempts > 1000 {
 		return nil, fmt.Errorf("invalid inbox store configuration")
@@ -42,6 +59,9 @@ func New(pool *pgxpool.Pool, chain domain.ChainID, lease time.Duration, maxAttem
 	}
 	return &Store{pool, chain, lease, maxAttempts, capacity}, nil
 }
+
+// dbError preserves cancellation/deadline identity and hides database server details behind the
+// service's safe error vocabulary.
 func dbError(err error) error {
 	if errors.Is(err, context.Canceled) {
 		return context.Canceled
@@ -51,11 +71,17 @@ func dbError(err error) error {
 	}
 	return inbound.ErrUnavailable // never expose server details or source bytes
 }
+
+// rollback attempts rollback with a separate bounded cleanup context so caller cancellation does
+// not skip cleanup.
 func rollback(ctx context.Context, tx pgx.Tx) {
 	cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	_ = tx.Rollback(cleanup)
 }
+
+// commit returns explicit commit uncertainty when the acknowledgement cannot establish success or
+// rollback.
 func commit(ctx context.Context, tx pgx.Tx) error {
 	if err := tx.Commit(ctx); err != nil {
 		if errors.Is(err, pgx.ErrTxCommitRollback) {
@@ -65,6 +91,9 @@ func commit(ctx context.Context, tx pgx.Tx) error {
 	}
 	return nil
 }
+
+// begin opens a local read-committed transaction with synchronous commit; initialization failure
+// rolls it back.
 func (s *Store) begin(ctx context.Context) (pgx.Tx, error) {
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
@@ -76,6 +105,9 @@ func (s *Store) begin(ctx context.Context) (pgx.Tx, error) {
 	}
 	return tx, nil
 }
+
+// Accept serializes durable admission, checks exact duplicates before capacity and commits new
+// Inbox input before returning success.
 func (s *Store) Accept(ctx context.Context, r inbound.AcceptRawBlockRequest) (bool, error) {
 	if err := inbound.ValidateEnvelope(r, s.chain, 64<<20); err != nil {
 		return false, err
@@ -135,8 +167,11 @@ func (s *Store) Accept(ctx context.Context, r inbound.AcceptRawBlockRequest) (bo
 	return false, nil
 }
 
+// eventColumns fixes the SQL projection order consumed by the claimed-event scanner.
 const eventColumns = `event_id,chain_id,block_number::text,block_hash,parent_hash,event_version,payload_version,provider,extracted_at,raw_block,raw_receipts,attempts,max_attempts`
 
+// scanItem decodes a claimed row into an application item, keeping no-row distinct from invalid or
+// unavailable storage.
 func scanItem(row pgx.Row) (*outbound.Item, error) {
 	var item outbound.Item
 	r := &item.Event
@@ -163,6 +198,9 @@ func scanItem(row pgx.Row) (*outbound.Item, error) {
 	r.ExtractedAt = at
 	return &item, nil
 }
+
+// Claim reclaims expired/due Inbox work with SKIP LOCKED and a new attempt fence; it returns only
+// after the claim transaction commits.
 func (s *Store) Claim(ctx context.Context) (*outbound.Item, error) {
 	tx, err := s.begin(ctx)
 	if err != nil {
@@ -194,6 +232,9 @@ func (s *Store) Claim(ctx context.Context) (*outbound.Item, error) {
 	}
 	return item, nil
 }
+
+// Complete fences the live Inbox claim and atomically stores the transformed result, its Outbox
+// intent and Inbox completion.
 func (s *Store) Complete(ctx context.Context, item outbound.Item, result outbound.Result) error {
 	r := item.Event
 	expected := fmt.Sprintf("transformed-block/v1/%s/%d/%x", r.Block.ChainID, r.Block.Number, r.Block.Hash)
@@ -223,6 +264,9 @@ func (s *Store) Complete(ctx context.Context, item outbound.Item, result outboun
 	}
 	return commit(ctx, tx)
 }
+
+// Fail persists a safe retry delay or terminal state for the matching live Inbox attempt; source
+// content remains retained.
 func (s *Store) Fail(ctx context.Context, item outbound.Item, f outbound.Failure) error {
 	if f.Delay < 0 || f.Delay > 24*time.Hour {
 		return domain.Invalid("retry delay")

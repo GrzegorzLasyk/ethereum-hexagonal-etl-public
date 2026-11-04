@@ -1,3 +1,6 @@
+// reindex.go implements independent historical range cursors and original-event replay in the
+// application orchestration layer.
+
 package usecases
 
 import (
@@ -11,6 +14,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
 
+// Reindex orchestrates an independent bounded historical cursor while preserving the active
+// extraction checkpoint.
 type Reindex struct {
 	options  IndexOptions
 	request  outbound.ReindexRequest
@@ -19,8 +24,12 @@ type Reindex struct {
 	store    outbound.ReindexStore
 }
 
+// Compile-time interface assertion checks adapter/interface compatibility at compile time without
+// allocating runtime state.
 var _ inbound.Indexer = (*Reindex)(nil)
 
+// NewReindex validates the independent historical range and injected ports without changing the
+// live checkpoint.
 func NewReindex(o IndexOptions, id string, source outbound.BlockSource, observer outbound.ChainObserver, store outbound.ReindexStore) (*Reindex, error) {
 	if err := o.Validate(); err != nil {
 		return nil, err
@@ -30,6 +39,9 @@ func NewReindex(o IndexOptions, id string, source outbound.BlockSource, observer
 	}
 	return &Reindex{o, outbound.ReindexRequest{ID: id, Start: o.Start, End: *o.End}, source, observer, store}, nil
 }
+
+// Cycle resumes the separate historical range cursor and commits complete observations without
+// advancing the active checkpoint.
 func (u *Reindex) Cycle(ctx context.Context) (result inbound.IndexResult, err error) {
 	result.ChainID = string(u.options.Chain)
 	result.Reindex = true

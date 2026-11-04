@@ -1,3 +1,6 @@
+// checkpoint.go implements sequential cursor and parent-continuity invariants in the pure domain
+// layer.
+
 package domain
 
 import (
@@ -42,6 +45,8 @@ func CheckPosition(chain ChainID, start, requested uint64, previous *Checkpoint)
 	return ErrOutOfSequence
 }
 
+// CheckContinuity requires the proposed child to follow the retained checkpoint parent identity
+// before persistence.
 func CheckContinuity(header Header, previous *Checkpoint) error {
 	if previous == nil {
 		return nil

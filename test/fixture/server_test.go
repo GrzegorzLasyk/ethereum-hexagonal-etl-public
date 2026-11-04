@@ -1,3 +1,6 @@
+// server_test.go exercises loopback HTTP routes and controlled local server lifecycle in the
+// offline test and diagnostic infrastructure.
+
 package fixture
 
 import (
@@ -13,6 +16,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// request builds a valid deterministic application/transport request so one invariant can be
+// varied per case.
 func request(t *testing.T, s *Server, path, body string) []byte {
 	t.Helper()
 	w := httptest.NewRecorder()
@@ -22,6 +27,9 @@ func request(t *testing.T, s *Server, path, body string) []byte {
 	}
 	return w.Body.Bytes()
 }
+
+// TestDeterministicChainAndReorg checks reproducible local blocks and a controlled branch switch
+// without external Ethereum data.
 func TestDeterministicChainAndReorg(t *testing.T) {
 	s := New(103)
 	read := func(tag string, full bool) json.RawMessage {
@@ -72,6 +80,9 @@ func TestDeterministicChainAndReorg(t *testing.T) {
 		t.Fatal("header request must return transaction hashes")
 	}
 }
+
+// TestInvalidControlAndUnknownRPC rejects unsupported local fixture controls/methods instead of
+// silently mutating state or contacting a provider.
 func TestInvalidControlAndUnknownRPC(t *testing.T) {
 	s := New(100)
 	for _, body := range []string{`{"head":99}`, `{"head":111}`, `{"unknown":true}`, `invalid`} {
@@ -87,11 +98,14 @@ func TestInvalidControlAndUnknownRPC(t *testing.T) {
 	}
 }
 
+// rawClient simulates durable receipt/failure for the fixture ACK-loss proxy.
 type rawClient struct {
 	fail     bool
 	accepted int
 }
 
+// SubmitRawBlock implements the controlled gRPC peer/client callback so publication and ACK
+// failures can be tested deterministically.
 func (c *rawClient) SubmitRawBlock(_ context.Context, _ *etlv1.SubmitRawBlockRequest, _ ...grpc.CallOption) (*etlv1.SubmitRawBlockResponse, error) {
 	if c.fail {
 		return nil, status.Error(codes.Unavailable, "receiver offline")
@@ -103,6 +117,9 @@ func (c *rawClient) SubmitRawBlock(_ context.Context, _ *etlv1.SubmitRawBlockReq
 	}
 	return &etlv1.SubmitRawBlockResponse{Acceptance: &etlv1.DurableAcceptance{Status: s}}, nil
 }
+
+// TestLostACKRequiresRealAcceptance requires the proxy to forward and receive durable acceptance
+// before simulating response loss.
 func TestLostACKRequiresRealAcceptance(t *testing.T) {
 	s := New(100)
 	request(t, s, "/control", `{"drop_raw":true}`)

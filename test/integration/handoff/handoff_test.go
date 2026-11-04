@@ -1,5 +1,8 @@
 //go:build postgresintegration
 
+// handoff_test.go exercises real-process gRPC durable handoff and duplicate/lost-ACK recovery in
+// the offline test and diagnostic infrastructure.
+
 package handoff_test
 
 import (
@@ -36,6 +39,8 @@ type child struct {
 	stopped bool
 }
 
+// launch starts a test-owned service process with explicit environment and records bounded
+// shutdown/error handling.
 func launch(t *testing.T, binary string, env []string) *child {
 	t.Helper()
 	p := &child{cmd: exec.Command(binary), done: make(chan error, 1)}
@@ -49,6 +54,8 @@ func launch(t *testing.T, binary string, env []string) *child {
 	t.Cleanup(func() { p.stop(t, false) })
 	return p
 }
+
+// stop stops the selected test-owned services/processes without deleting unrelated storage.
 func (p *child) stop(t *testing.T, crash bool) {
 	t.Helper()
 	if p.stopped {
@@ -74,6 +81,9 @@ func (p *child) stop(t *testing.T, crash bool) {
 		t.Fatal("service data race", p.output.String())
 	}
 }
+
+// await waits within the test's bounded deadline for asynchronous progress; timeout is a test
+// failure.
 func await(t *testing.T, label string, predicate func() bool) {
 	t.Helper()
 	timer := time.NewTimer(30 * time.Second)
@@ -93,6 +103,8 @@ func await(t *testing.T, label string, predicate func() bool) {
 		}
 	}
 }
+
+// reserve reserves an ephemeral loopback listener for a test-owned gRPC endpoint.
 func reserve(t *testing.T) net.Listener {
 	t.Helper()
 	l, e := net.Listen("tcp4", "127.0.0.1:0")
@@ -101,6 +113,9 @@ func reserve(t *testing.T) net.Listener {
 	}
 	return l
 }
+
+// pool opens an explicitly configured owning-role test pool with test cleanup; it is never a
+// cross-service runtime dependency.
 func pool(t *testing.T, service string) *pgxpool.Pool {
 	t.Helper()
 	p, e := pgxpool.New(t.Context(), os.Getenv(strings.ToUpper(service)+"_TEST_DATABASE_URL"))
@@ -114,6 +129,9 @@ func pool(t *testing.T, service string) *pgxpool.Pool {
 	}
 	return p
 }
+
+// queryInt reads a required scalar database assertion and fails on query/scan errors rather than
+// returning a healthy zero.
 func queryInt(t *testing.T, p *pgxpool.Pool, q string) int {
 	t.Helper()
 	var n int
@@ -122,6 +140,8 @@ func queryInt(t *testing.T, p *pgxpool.Pool, q string) int {
 	}
 	return n
 }
+
+// connection opens a test-local gRPC connection and attaches its lifetime to test cleanup.
 func connection(t *testing.T, address string) *grpc.ClientConn {
 	t.Helper()
 	opts, e := grpccontract.DefaultLimits().ClientOptions()
@@ -137,6 +157,8 @@ func connection(t *testing.T, address string) *grpc.ClientConn {
 	return c
 }
 
+// rawProxy forwards raw events to the real test recipient, records duplicates and loses a
+// controlled ACK.
 type rawProxy struct {
 	etlv1.UnimplementedTransformerServiceServer
 	client     etlv1.TransformerServiceClient
@@ -148,6 +170,8 @@ type rawProxy struct {
 	changed    atomic.Bool
 }
 
+// SubmitRawBlock forwards to the real test recipient and injects controlled ACK loss/duplicate
+// observation after acceptance.
 func (p *rawProxy) SubmitRawBlock(c context.Context, r *etlv1.SubmitRawBlockRequest) (*etlv1.SubmitRawBlockResponse, error) {
 	p.mu.Lock()
 	if p.first == nil {
@@ -171,6 +195,8 @@ func (p *rawProxy) SubmitRawBlock(c context.Context, r *etlv1.SubmitRawBlockRequ
 	return ack, nil
 }
 
+// transformedProxy forwards transformed events and observes exact duplicate identity/content after
+// controlled ACK loss.
 type transformedProxy struct {
 	etlv1.UnimplementedLoaderServiceServer
 	client     etlv1.LoaderServiceClient
@@ -182,6 +208,8 @@ type transformedProxy struct {
 	changed    atomic.Bool
 }
 
+// SubmitTransformedBlock forwards to the real test recipient and injects controlled ACK
+// loss/duplicate observation after acceptance.
 func (p *transformedProxy) SubmitTransformedBlock(c context.Context, r *etlv1.SubmitTransformedBlockRequest) (*etlv1.SubmitTransformedBlockResponse, error) {
 	p.mu.Lock()
 	if p.first == nil {
@@ -204,6 +232,8 @@ func (p *transformedProxy) SubmitTransformedBlock(c context.Context, r *etlv1.Su
 	}
 	return ack, nil
 }
+
+// serve registers and runs a test-local gRPC server on the reserved listener with cleanup.
 func serve(t *testing.T, l net.Listener, register func(*grpc.Server)) {
 	t.Helper()
 	opts, e := grpccontract.DefaultLimits().ServerOptions()
@@ -216,6 +246,9 @@ func serve(t *testing.T, l net.Listener, register func(*grpc.Server)) {
 	go func() { done <- s.Serve(l) }()
 	t.Cleanup(func() { s.Stop(); l.Close(); <-done })
 }
+
+// TestHandoff runs real processes and PostgreSQL to verify both gRPC ACK boundaries and durable
+// duplicate/recovery behavior.
 func TestHandoff(t *testing.T) {
 	if os.Getenv("HANDOFF_TEST_ISOLATED") != "1" {
 		t.Skip("run go run ./test/integration/cmd/handoff-postgres")

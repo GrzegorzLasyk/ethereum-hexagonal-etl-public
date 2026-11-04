@@ -1,3 +1,6 @@
+// publisher.go implements one-call gRPC publication and durable-ACK/error classification in the
+// outbound adapter layer.
+
 // Package grpc implements the outbound publication port using the v1 contract.
 package grpc
 
@@ -17,6 +20,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// Publisher owns the lazy downstream gRPC connection and validates event/ACK identity within the
+// configured transport limits.
 type Publisher struct {
 	client etlv1.LoaderServiceClient
 	conn   *transport.ClientConn
@@ -24,6 +29,8 @@ type Publisher struct {
 	limits grpccontract.Limits
 }
 
+// Compile-time interface assertion checks adapter/interface compatibility at compile time without
+// allocating runtime state.
 var _ outbound.Publisher = (*Publisher)(nil)
 
 // New opens a lazy connection. Starting a sender never requires its recipient
@@ -43,7 +50,12 @@ func New(address, chain string, limits grpccontract.Limits) (*Publisher, error) 
 	}
 	return &Publisher{etlv1.NewLoaderServiceClient(conn), conn, chain, limits}, nil
 }
+
+// Close closes the owned lazy gRPC connection after dispatch workers have stopped.
 func (p *Publisher) Close() error { return p.conn.Close() }
+
+// Publish validates metadata/size, makes one caller-bounded gRPC call and verifies its durable
+// ACK; retries belong to the Outbox use case.
 func (p *Publisher) Publish(ctx context.Context, e outbound.Publication) error {
 	if err := ctx.Err(); err != nil {
 		return err

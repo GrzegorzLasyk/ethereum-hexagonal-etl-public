@@ -1,5 +1,8 @@
 //go:build composeintegration
 
+// storage_test.go exercises disposable backup/restore, retained history and query measurements in
+// the offline test and diagnostic infrastructure.
+
 package fixture_test
 
 import (
@@ -30,6 +33,8 @@ func (s *system) pg(service, role, database string, args ...string) ([]byte, err
 	return s.command(append(cmd, args...)...)
 }
 
+// sql executes an explicit diagnostic query in the selected disposable service/role/database
+// context.
 func (s *system) sql(service, role, database, query string) []byte {
 	s.t.Helper()
 	out, err := s.pg(service, role, database, "psql", "-X", "-w", "-h", "127.0.0.1", "-U", role, "-d", database, "-v", "ON_ERROR_STOP=1", "-At", "-c", query)
@@ -39,6 +44,7 @@ func (s *system) sql(service, role, database, query string) []byte {
 	return bytes.TrimSpace(out)
 }
 
+// admin runs bounded disposable-cluster administration needed by backup/restore verification.
 func (s *system) admin(service string, args ...string) {
 	s.t.Helper()
 	if out, err := s.pg(service, "postgres", "postgres", args...); err != nil {
@@ -46,6 +52,8 @@ func (s *system) admin(service string, args ...string) {
 	}
 }
 
+// verifyStorageRelease verifies backup, restore, schema privileges and preserved data using a
+// separate disposable target.
 func (s *system) verifyStorageRelease() {
 	s.base = append(s.base, "-f", filepath.Join(s.root, "deployments/compose/storage.yaml"))
 	dir, err := os.MkdirTemp("", "ethereum-storage-evidence-")
@@ -128,10 +136,13 @@ func (s *system) verifyStorageRelease() {
 	s.t.Log("PASS: storage release verification; original history preserved; both volumes retained")
 }
 
+// restoreEmpty checks the restore destination is empty before any archive is applied.
 func (s *system) restoreEmpty() bool {
 	return string(s.sql("restore", "postgres", "postgres", "SELECT count(*) FROM pg_database WHERE datname='ethereum_etl'")) == "0"
 }
 
+// writeEvidence writes bounded local storage-verification evidence in the requested test
+// directory.
 func writeEvidence(s *system, dir, name string, data []byte) {
 	s.t.Helper()
 	if err := os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {
@@ -139,6 +150,8 @@ func writeEvidence(s *system, dir, name string, data []byte) {
 	}
 }
 
+// storageSnapshot captures schema/row/privilege evidence for comparing the original and disposable
+// restored database.
 func (s *system) storageSnapshot(service string) []byte {
 	var result bytes.Buffer
 	for _, schema := range []string{"extractor", "transformer", "loader"} {
@@ -191,6 +204,8 @@ func (s *system) queryLiteral(relative, contains string) string {
 	return found[0]
 }
 
+// measureStorage records bounded critical-query plans and storage evidence without changing
+// application indexes.
 func (s *system) measureStorage(dir string) {
 	// SQL-shape fixtures only: copied payloads intentionally do not describe the
 	// synthetic identities. Never start ETL workers against this measurement clone.
@@ -214,6 +229,8 @@ func (s *system) measureStorage(dir string) {
 		}
 	}
 	writeEvidence(s, dir, "environment.txt", s.sql("restore", "postgres", "ethereum_etl", "SELECT version(); SHOW shared_buffers; SHOW work_mem; SELECT pg_database_size(current_database()); SELECT schemaname,relname,n_live_tup,pg_total_relation_size(relid) FROM pg_stat_user_tables ORDER BY schemaname,relname"))
+	// query identifies an adapter SQL statement to measure with its owning runtime role;
+	// the matcher selects current source SQL instead of maintaining a benchmark-only copy.
 	type query struct{ name, service, file, match string }
 	queries := []query{
 		{"extractor_claim", "extractor", "outbox.go", "WITH candidate AS"},
@@ -238,6 +255,8 @@ func (s *system) measureStorage(dir string) {
 	s.explain(dir, "loader_height", "loader", "SELECT block_hash,canonical_status,height_conflict,parent_link FROM loader.blocks WHERE chain_id='777' AND block_number=5000")
 }
 
+// explain executes the selected disposable query with ANALYZE/BUFFERS and records its measured
+// plan.
 func (s *system) explain(dir, name, service, query string) {
 	// EXPLAIN ANALYZE executes DML. Roll back each sample, even on this clone.
 	for sample := 0; sample < 3; sample++ {
@@ -256,6 +275,8 @@ func (s *system) explain(dir, name, service, query string) {
 	}
 }
 
+// restoreArchive restores the prepared archive only into the verified empty disposable target and
+// propagates failure.
 func (s *system) restoreArchive() error {
 	if !s.restoreEmpty() {
 		return errors.New("refusing restore: destination database exists")

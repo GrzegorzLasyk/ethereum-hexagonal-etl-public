@@ -1,3 +1,6 @@
+// indexing_test.go exercises range eligibility, admission and operation-identity rules in the pure
+// domain layer.
+
 package domain
 
 import (
@@ -5,6 +8,8 @@ import (
 	"testing"
 )
 
+// TestEligibility checks confirmation subtraction without unsigned underflow and allows the
+// explicitly configured zero-depth case.
 func TestEligibility(t *testing.T) {
 	for _, c := range []struct {
 		head, depth, want uint64
@@ -16,6 +21,9 @@ func TestEligibility(t *testing.T) {
 		}
 	}
 }
+
+// TestCapacityAndOperationIdentity checks admission edge values and stable operator-ID validation
+// used by audited recovery.
 func TestCapacityAndOperationIdentity(t *testing.T) {
 	l := CapacityLimits{10, 100, 1000}
 	if l.Validate() != nil {

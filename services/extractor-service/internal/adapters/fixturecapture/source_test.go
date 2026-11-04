@@ -1,3 +1,6 @@
+// source_test.go exercises network-free replay of verified fixture artifacts in the Extractor
+// fixture/operator adapter.
+
 package fixturecapture
 
 import (
@@ -11,6 +14,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
 
+// TestReplaySourceOffline checks verified historical heights replay through production decoding
+// with exact bytes and no external transport.
 func TestReplaySourceOffline(t *testing.T) {
 	c, e := synthetic(t)
 	path := filepath.Join(t.TempDir(), "fixture.json")

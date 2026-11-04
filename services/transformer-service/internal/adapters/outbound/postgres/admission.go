@@ -1,3 +1,6 @@
+// admission.go implements bounded durable or in-flight acceptance and resource accounting in the
+// outbound adapter layer.
+
 package postgres
 
 import (

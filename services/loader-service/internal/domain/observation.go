@@ -1,3 +1,6 @@
+// observation.go implements pure competing-height and parent-link observations in the pure domain
+// layer.
+
 package domain
 
 import "math"
@@ -10,18 +13,29 @@ type BlockReference struct {
 	ParentHash Hash
 }
 
+// CanonicalStatus labels the Loader consensus-knowledge state; the implemented policy supports
+// unknown only.
 type CanonicalStatus string
 
+// CanonicalUnknown is the only implemented canonicality state; local observations are not
+// consensus proof.
 const CanonicalUnknown CanonicalStatus = "unknown"
 
+// ParentLink describes a local observed parent relationship, not canonicality or consensus
+// finality.
 type ParentLink string
 
 const (
-	ParentUnknown  ParentLink = "unknown"
-	ParentLinked   ParentLink = "linked"
+	// ParentUnknown records absence of retained parent evidence, including genesis.
+	ParentUnknown ParentLink = "unknown"
+	// ParentLinked records a matching retained parent hash without asserting that either candidate is
+	// canonical.
+	ParentLinked ParentLink = "linked"
+	// ParentMismatch records known previous-height observations with no matching parent hash.
 	ParentMismatch ParentLink = "mismatch"
 )
 
+// Observation pairs one retained block candidate with competing-height and parent-link evidence.
 type Observation struct {
 	Block           BlockReference
 	CanonicalStatus CanonicalStatus

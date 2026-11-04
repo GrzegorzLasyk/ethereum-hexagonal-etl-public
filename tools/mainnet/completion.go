@@ -1,3 +1,8 @@
+// completion.go implements bounded Mainnet target validation and no-RPC durable completion
+// inspection in the local operator tooling.
+
+// Package main implements private bounded Mainnet setup, preflight, acquisition, no-RPC completion
+// inspection and audited recovery commands; acquisition requires explicit opt-in.
 package main
 
 import (
@@ -12,6 +17,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/etlverify"
 )
 
+// completionBounds checks the fixed one-block live verification range and finite operation
+// deadlines before building commands.
 func completionBounds(c map[string]string, live bool, parent []string) (time.Duration, error) {
 	if c["EXTRACTOR_START_BLOCK"] != "1000000" || c["EXTRACTOR_END_BLOCK"] != "1000000" {
 		return 0, errors.New("Stage 13.4A requires explicit range 1000000..1000000")

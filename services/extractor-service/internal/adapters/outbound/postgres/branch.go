@@ -1,3 +1,6 @@
+// branch.go implements per-chain transaction coordination, immutable observations and
+// revision-fenced rewinds in the outbound adapter layer.
+
 package postgres
 
 import (
@@ -11,9 +14,15 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// Compile-time interface assertion checks adapter/interface compatibility at compile time without
+// allocating runtime state.
 var _ outbound.BranchStore = (*Store)(nil)
 
+// number formats a uint64 height as decimal text for exact PostgreSQL numeric parameters.
 func number(n uint64) string { return strconv.FormatUint(n, 10) }
+
+// beginBranch starts a synchronous local transaction and takes the per-chain advisory lock shared
+// by commits and rewinds.
 func (s *Store) beginBranch(ctx context.Context) (pgx.Tx, error) {
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
@@ -28,6 +37,9 @@ func (s *Store) beginBranch(ctx context.Context) (pgx.Tx, error) {
 	}
 	return tx, nil
 }
+
+// commitBranch commits branch changes and marks uncertain acknowledgements explicitly; callers
+// must not assume rollback.
 func commitBranch(ctx context.Context, tx pgx.Tx) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -40,6 +52,9 @@ func commitBranch(ctx context.Context, tx pgx.Tx) error {
 	}
 	return nil
 }
+
+// payloadBytes sums retained raw block/receipt lengths for admission accounting, not total decoded
+// memory.
 func payloadBytes(e domain.Extraction) int64 {
 	n := int64(len(e.RawBlock))
 	for _, r := range e.RawReceipts {
@@ -47,6 +62,9 @@ func payloadBytes(e domain.Extraction) int64 {
 	}
 	return n
 }
+
+// observationExists checks retained full block identity, parent and Outbox intent without
+// replacing the original snapshot.
 func (s *Store) observationExists(ctx context.Context, tx pgx.Tx, e domain.Extraction) (bool, error) {
 	id := e.Header.ID
 	var parent []byte
@@ -69,6 +87,9 @@ func (s *Store) observationExists(ctx context.Context, tx pgx.Tx, e domain.Extra
 	}
 	return true, nil
 }
+
+// insertObservation inserts immutable raw data and its matching Outbox intent inside the caller's
+// transaction.
 func (s *Store) insertObservation(ctx context.Context, tx pgx.Tx, e domain.Extraction) error {
 	metadata, at, err := encodeMetadata(e)
 	if err != nil {
@@ -86,8 +107,12 @@ func (s *Store) insertObservation(ctx context.Context, tx pgx.Tx, e domain.Extra
 	return nil
 }
 
+// capacitySQL observes owning-chain outstanding payloads and database-size watermark for
+// acquisition admission.
 const capacitySQL = `SELECT count(*)::bigint,COALESCE(sum(octet_length(b.raw_block)+COALESCE((SELECT sum(octet_length(r)) FROM unnest(b.raw_receipts) r),0)),0)::bigint,pg_database_size(current_database()) FROM extractor.outbox_events o JOIN extractor.raw_blocks b USING(chain_id,block_number,block_hash) WHERE o.chain_id=$1 AND o.status<>'delivered'`
 
+// readCapacity maps one owning-Outbox/database-size query into admission counters, propagating
+// query errors.
 func readCapacity(row pgx.Row) (domain.Capacity, error) {
 	var c domain.Capacity
 	if err := row.Scan(&c.Events, &c.Bytes, &c.DatabaseBytes); err != nil {
@@ -95,9 +120,15 @@ func readCapacity(row pgx.Row) (domain.Capacity, error) {
 	}
 	return c, nil
 }
+
+// Capacity reads outstanding local work and the database-size watermark; these are observations,
+// not disk reservations.
 func (s *Store) Capacity(ctx context.Context) (domain.Capacity, error) {
 	return readCapacity(s.db.QueryRow(ctx, capacitySQL, string(s.chain)))
 }
+
+// checkCapacity rechecks acquisition watermarks inside the serialized write transaction before
+// adding a new observation.
 func (s *Store) checkCapacity(ctx context.Context, tx pgx.Tx, l domain.CapacityLimits, bytes int64) error {
 	c, err := readCapacity(tx.QueryRow(ctx, capacitySQL, string(s.chain)))
 	if err != nil {
@@ -108,6 +139,9 @@ func (s *Store) checkCapacity(ctx context.Context, tx pgx.Tx, l domain.CapacityL
 	}
 	return nil
 }
+
+// ActiveHeader loads the retained active branch identity and parent at a height; missing history
+// is an explicit error.
 func (s *Store) ActiveHeader(ctx context.Context, n uint64) (domain.Header, error) {
 	var h domain.Header
 	var hash, parent []byte
@@ -125,6 +159,9 @@ func (s *Store) ActiveHeader(ctx context.Context, n uint64) (domain.Header, erro
 	h.ParentHash = domain.Hash(parent)
 	return h, nil
 }
+
+// Rewind conditionally audits and moves the active checkpoint to a retained ancestor under its
+// revision fence. Historical snapshots and Outbox events remain intact.
 func (s *Store) Rewind(ctx context.Context, expected domain.Checkpoint, ancestor domain.BlockID) error {
 	if expected.Block.Validate() != nil || ancestor.Validate() != nil || expected.Revision >= math.MaxInt64 {
 		return domain.ErrInvalidData

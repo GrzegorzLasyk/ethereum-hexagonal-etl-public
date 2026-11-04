@@ -1,3 +1,6 @@
+// main.go orchestrates an isolated Docker/PostgreSQL test environment, bounded child processes,
+// credential redaction and optional resource retention.
+
 // Command handoff-postgres runs Stage 9 tests in a disposable Compose project.
 package main
 
@@ -20,20 +23,28 @@ import (
 	"time"
 )
 
+// composeFile selects the checked-in Compose definition; project identity and private credentials
+// are passed separately.
 const composeFile = "deployments/compose/compose.yaml"
 
+// passwordNames lists credential variable names to generate/filter/redact; it contains no real
+// passwords.
 var passwordNames = []string{
 	"POSTGRES_PASSWORD", "EXTRACTOR_MIGRATOR_PASSWORD", "EXTRACTOR_RUNTIME_PASSWORD",
 	"TRANSFORMER_MIGRATOR_PASSWORD", "TRANSFORMER_RUNTIME_PASSWORD",
 	"LOADER_MIGRATOR_PASSWORD", "LOADER_RUNTIME_PASSWORD",
 }
 
+// command describes a child process invocation for isolated runner orchestration and deterministic
+// command fakes.
 type command struct {
 	phase, program, root string
 	expected             string
 	args, env, secrets   []string
 }
 
+// main invokes the local tool entry point and reports a nonzero status on configuration or
+// execution failure.
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -43,6 +54,8 @@ func main() {
 	}
 }
 
+// start orchestrates the selected isolated test project with generated credentials, bounded child
+// processes and owned-resource cleanup/retention.
 func start(ctx context.Context) error {
 	if len(os.Args) > 1 && os.Args[1] == "--baseline" {
 		return startBaseline(ctx, os.Args[2:])
@@ -71,6 +84,8 @@ func start(ctx context.Context) error {
 	return run(ctx, root, os.Environ(), port, execute)
 }
 
+// randomHex uses cryptographic randomness for isolated project credentials/identifiers and
+// propagates entropy-source failure.
 func randomHex(n int) (string, error) {
 	b := make([]byte, n)
 	if _, err := rand.Read(b); err != nil {
@@ -104,10 +119,14 @@ func isolatedEnvironment(parent []string) []string {
 	return env
 }
 
+// run orchestrates the selected isolated test project with generated credentials, bounded child
+// processes and owned-resource cleanup/retention.
 func run(ctx context.Context, root string, parent []string, port int, invoke func(context.Context, command) error) (result error) {
 	return runCase(ctx, root, parent, port, invoke, nil)
 }
 
+// runCase invokes one isolated seed/handoff scenario under its context and propagates failure
+// before continuing.
 func runCase(ctx context.Context, root string, parent []string, port int, invoke func(context.Context, command) error, fixture *realCase, baselineSpecs ...*baselineRun) (result error) {
 	var baseline *baselineRun
 	if len(baselineSpecs) > 0 {
@@ -251,6 +270,8 @@ type outputBuffer struct {
 	overflow bool
 }
 
+// Write buffers child output up to the configured cap while reporting the original write length to
+// the producer.
 func (b *outputBuffer) Write(p []byte) (int, error) {
 	if b.overflow {
 		return len(p), nil
@@ -263,6 +284,7 @@ func (b *outputBuffer) Write(p []byte) (int, error) {
 	return b.buffer.Write(p)
 }
 
+// safe returns bounded captured output with generated credentials and connection strings removed.
 func (b *outputBuffer) safe(secrets []string) string {
 	if b.overflow {
 		return "command output omitted: exceeded 4 MiB\n"
@@ -276,6 +298,8 @@ func (b *outputBuffer) safe(secrets []string) string {
 	return s
 }
 
+// execute runs a bounded child command and returns its exit status through redacted, size-limited
+// output handling.
 func execute(ctx context.Context, c command) error {
 	fmt.Fprintln(os.Stdout, c.phase)
 	cmd := exec.CommandContext(ctx, c.program, c.args...)

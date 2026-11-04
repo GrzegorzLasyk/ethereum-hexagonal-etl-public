@@ -1,3 +1,6 @@
+// metrics_test.go exercises low-cardinality operation/queue exposition with snapshot
+// failure/freshness semantics in the outbound adapter layer.
+
 package jsonrpc
 
 import (
@@ -14,6 +17,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/application/ports/outbound"
 )
 
+// TestRPCMetricsCountActualRetriesAndBudget compares transport reservations with metrics so
+// retries consume the same actual-attempt budget.
 func TestRPCMetricsCountActualRetriesAndBudget(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		cfg := testConfig("http://127.0.0.1:1/private-secret")

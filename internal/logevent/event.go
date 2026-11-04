@@ -1,3 +1,6 @@
+// event.go implements the fixed structured-log vocabulary and safe correlated error reporting in
+// the shared technical support layer, outside service domains.
+
 // Package logevent formats adapter logs. It is not a domain model or an
 // application dependency. Only explicitly selected metadata crosses this boundary.
 package logevent
@@ -12,7 +15,11 @@ import (
 	"time"
 )
 
+// identity recognizes safe stable event identities for correlation fields.
 var identity = regexp.MustCompile(`^(raw-block|transformed-block)/v1/(0|[1-9][0-9]*)/(0|[1-9][0-9]*)/([0-9a-f]{64})$`)
+
+// decimal recognizes canonical nonnegative decimal values before log correlation fields are
+// accepted.
 var decimal = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
 
 // Event contains no payload, provider, connection configuration or error text.

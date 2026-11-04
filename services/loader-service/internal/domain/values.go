@@ -1,5 +1,9 @@
+// values.go implements field representation and presence/null invariants in the pure domain layer.
+
 package domain
 
+// validateValues validates field representations and optional-value coherence before cross-record
+// identity/membership rules run.
 func (s Snapshot) validateValues() error {
 	if err := s.Block.validateValues(); err != nil {
 		return err
@@ -22,6 +26,8 @@ func (s Snapshot) validateValues() error {
 	return nil
 }
 
+// validateValues validates field representations and optional-value coherence before cross-record
+// identity/membership rules run.
 func (v Block) validateValues() error {
 	if !v.Difficulty.Valid() {
 		return Invalid("Block.Difficulty")
@@ -62,6 +68,8 @@ func (v Block) validateValues() error {
 	return nil
 }
 
+// validateValues validates field representations and optional-value coherence before cross-record
+// identity/membership rules run.
 func (v Transaction) validateValues() error {
 	if v.To.Null && !v.To.Present {
 		return Invalid("Transaction.To presence")
@@ -152,6 +160,8 @@ func (v Transaction) validateValues() error {
 	return nil
 }
 
+// validateValues validates field representations and optional-value coherence before cross-record
+// identity/membership rules run.
 func (v Receipt) validateValues() error {
 	if v.To.Null && !v.To.Present {
 		return Invalid("Receipt.To presence")
@@ -186,6 +196,8 @@ func (v Receipt) validateValues() error {
 	return nil
 }
 
+// validateValues validates field representations and optional-value coherence before cross-record
+// identity/membership rules run.
 func (v Log) validateValues() error {
 	if v.Topics == nil {
 		return Invalid("Log.Topics")
@@ -199,6 +211,8 @@ func (v Log) validateValues() error {
 	return nil
 }
 
+// validateValues validates field representations and optional-value coherence before cross-record
+// identity/membership rules run.
 func (v Access) validateValues() error {
 	if v.StorageKeys == nil {
 		return Invalid("Access.StorageKeys")
@@ -206,6 +220,8 @@ func (v Access) validateValues() error {
 	return nil
 }
 
+// validateValues validates field representations and optional-value coherence before cross-record
+// identity/membership rules run.
 func (v Authorization) validateValues() error {
 	if !v.ChainID.Valid() {
 		return Invalid("Authorization.ChainID")

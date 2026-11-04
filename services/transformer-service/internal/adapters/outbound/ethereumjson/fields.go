@@ -1,3 +1,6 @@
+// fields.go implements JSON field shape, numeric-width and missing/null conversion helpers in the
+// outbound adapter layer.
+
 // Package ethereumjson owns Ethereum JSON DTOs and representation conversion.
 package ethereumjson
 
@@ -14,12 +17,19 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/domain"
 )
 
+// object maps JSON field names to raw values at the adapter boundary; domain types remain JSON-
+// independent.
 type object map[string]json.RawMessage
+
+// reader is a field decoder used by required/optional/array helpers to keep JSON rules at the
+// adapter boundary.
 type reader struct {
 	o   object
 	err error
 }
 
+// read requires a field and delegates decoding; missing/null required data is an error rather than
+// a zero value.
 func read[T any](r *reader, key string, decode func(json.RawMessage) (T, error)) T {
 	var zero T
 	if r.err != nil {
@@ -32,6 +42,9 @@ func read[T any](r *reader, key string, decode func(json.RawMessage) (T, error))
 	}
 	return v
 }
+
+// optional preserves absent, explicit null and present values while invoking the supplied decoder
+// only for present data.
 func optional[T any](r *reader, key string, decode func(json.RawMessage) (T, error), required bool) domain.Optional[T] {
 	raw, present := r.o[key]
 	result := domain.Optional[T]{Present: present}
@@ -47,6 +60,9 @@ func optional[T any](r *reader, key string, decode func(json.RawMessage) (T, err
 	}
 	return result
 }
+
+// array decodes an explicit collection with the supplied element reader and preserves source
+// order.
 func array(raw json.RawMessage) ([]json.RawMessage, error) {
 	var v []json.RawMessage
 	if json.Unmarshal(raw, &v) != nil || v == nil {
@@ -54,6 +70,9 @@ func array(raw json.RawMessage) ([]json.RawMessage, error) {
 	}
 	return v, nil
 }
+
+// plainObject decodes an object for field mapping after the surrounding duplicate-key/shape
+// validation.
 func plainObject(raw []byte) (object, error) {
 	var v object
 	if json.Unmarshal(raw, &v) != nil || v == nil {
@@ -61,6 +80,8 @@ func plainObject(raw []byte) (object, error) {
 	}
 	return v, nil
 }
+
+// objectOf requires a JSON object and rejects ambiguous duplicate fields before typed conversion.
 func objectOf(ctx context.Context, raw []byte) (object, error) {
 	if !utf8.Valid(raw) {
 		return nil, domain.Invalid("JSON UTF-8")
@@ -75,6 +96,9 @@ func objectOf(ctx context.Context, raw []byte) (object, error) {
 	}
 	return plainObject(raw)
 }
+
+// walk walks JSON structure to detect duplicate object keys and malformed/trailing input before
+// field mapping.
 func walk(ctx context.Context, d *json.Decoder, depth int) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -121,6 +145,9 @@ func walk(ctx context.Context, d *json.Decoder, depth int) error {
 	}
 	return nil
 }
+
+// number parses an exact numeric JSON value according to this adapter representation, rejecting
+// malformed or overflowing input.
 func number(raw json.RawMessage, bits int) (*big.Int, error) {
 	var s string
 	if json.Unmarshal(raw, &s) != nil || !strings.HasPrefix(s, "0x") || len(s) < 3 || len(s) > 3 && s[2] == '0' {
@@ -137,6 +164,9 @@ func number(raw json.RawMessage, bits int) (*big.Int, error) {
 	}
 	return n, nil
 }
+
+// quantity decodes an exact quantity into the domain decimal representation rather than floating
+// point.
 func quantity(raw json.RawMessage) (domain.Quantity, error) {
 	n, err := number(raw, 256)
 	if err != nil {
@@ -144,6 +174,9 @@ func quantity(raw json.RawMessage) (domain.Quantity, error) {
 	}
 	return domain.Quantity(n.String()), nil
 }
+
+// chainID converts the encoded chain value into its canonical domain representation with
+// validation.
 func chainID(raw json.RawMessage) (domain.ChainID, error) {
 	n, err := number(raw, 0)
 	if err != nil {
@@ -151,6 +184,8 @@ func chainID(raw json.RawMessage) (domain.ChainID, error) {
 	}
 	return domain.ChainID(n.String()), nil
 }
+
+// uintValue requires an unsigned integer fitting the domain field width and rejects overflow.
 func uintValue(raw json.RawMessage) (uint64, error) {
 	n, err := number(raw, 64)
 	if err != nil {
@@ -158,6 +193,9 @@ func uintValue(raw json.RawMessage) (uint64, error) {
 	}
 	return n.Uint64(), nil
 }
+
+// data decodes hexadecimal data with explicit width rules instead of interpreting it as an
+// integer.
 func data(raw json.RawMessage) ([]byte, error) {
 	var s string
 	if json.Unmarshal(raw, &s) != nil || !strings.HasPrefix(s, "0x") || len(s)%2 != 0 {
@@ -169,6 +207,8 @@ func data(raw json.RawMessage) ([]byte, error) {
 	}
 	return b, nil
 }
+
+// hash decodes an exact 32-byte hash rather than padding or truncating input.
 func hash(raw json.RawMessage) (domain.Hash, error) {
 	var v domain.Hash
 	b, err := data(raw)
@@ -178,6 +218,8 @@ func hash(raw json.RawMessage) (domain.Hash, error) {
 	copy(v[:], b)
 	return v, nil
 }
+
+// address decodes an exact 20-byte address; nullable fields are handled by the optional wrapper.
 func address(raw json.RawMessage) (domain.Address, error) {
 	var v domain.Address
 	b, err := data(raw)
@@ -187,6 +229,8 @@ func address(raw json.RawMessage) (domain.Address, error) {
 	copy(v[:], b)
 	return v, nil
 }
+
+// bloom decodes the fixed 256-byte Ethereum log bloom.
 func bloom(raw json.RawMessage) (domain.Bloom, error) {
 	var v domain.Bloom
 	b, err := data(raw)
@@ -196,6 +240,8 @@ func bloom(raw json.RawMessage) (domain.Bloom, error) {
 	copy(v[:], b)
 	return v, nil
 }
+
+// nonce decodes the fixed-width block nonce without treating it as a decimal counter.
 func nonce(raw json.RawMessage) (domain.Nonce, error) {
 	var v domain.Nonce
 	b, err := data(raw)
@@ -205,6 +251,8 @@ func nonce(raw json.RawMessage) (domain.Nonce, error) {
 	copy(v[:], b)
 	return v, nil
 }
+
+// hashes decodes the ordered hash collection and rejects malformed elements.
 func hashes(raw json.RawMessage) ([]domain.Hash, error) {
 	items, err := array(raw)
 	if err != nil {
@@ -220,6 +268,8 @@ func hashes(raw json.RawMessage) ([]domain.Hash, error) {
 	}
 	return v, nil
 }
+
+// boolean requires a JSON boolean instead of accepting truthy strings or numeric substitutes.
 func boolean(raw json.RawMessage) (bool, error) {
 	if bytes.Equal(raw, []byte("true")) {
 		return true, nil

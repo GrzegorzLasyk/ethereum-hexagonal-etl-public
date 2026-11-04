@@ -1,3 +1,6 @@
+// lifecycle_test.go exercises finite producer completion without canceling the still-needed
+// dispatcher in the service composition/operator entry point.
+
 package main
 
 import (
@@ -8,6 +11,8 @@ import (
 	"time"
 )
 
+// TestFiniteAcquisitionKeepsDispatchUntilCompletion blocks delivery after acquisition finishes and
+// requires the sender to remain alive until bounded drain completes.
 func TestFiniteAcquisitionKeepsDispatchUntilCompletion(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		t.Run(map[bool]string{false: "delivered", true: "timeout"}[fail], func(t *testing.T) {
@@ -44,6 +49,9 @@ func TestFiniteAcquisitionKeepsDispatchUntilCompletion(t *testing.T) {
 		})
 	}
 }
+
+// TestAcquisitionFailureDoesNotClaimDrainSuccess ensures failed acquisition cannot be reported as
+// a successfully drained finite range.
 func TestAcquisitionFailureDoesNotClaimDrainSuccess(t *testing.T) {
 	failure := errors.New("acquisition failed")
 	err := runAcquisition(t.Context(), true, func(context.Context) error { return failure }, func(ctx context.Context) { <-ctx.Done() }, func(context.Context) error { t.Fatal("drain after failed acquisition"); return nil })
@@ -52,6 +60,8 @@ func TestAcquisitionFailureDoesNotClaimDrainSuccess(t *testing.T) {
 	}
 }
 
+// TestFollowHeadGracefulCancellation checks that ordinary follow-head cancellation joins the
+// sender without pretending a finite range completed.
 func TestFollowHeadGracefulCancellation(t *testing.T) {
 	for _, finite := range []bool{false, true} {
 		ctx, cancel := context.WithCancel(t.Context())

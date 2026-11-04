@@ -1,3 +1,6 @@
+// limits_test.go exercises approved gRPC payload/message ceilings and validation in the shared
+// technical support layer, outside service domains.
+
 package grpccontract
 
 import (
@@ -16,6 +19,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// TestLimitsValidation checks transport ceilings remain positive, ordered and within the approved
+// payload/message maxima.
 func TestLimitsValidation(t *testing.T) {
 	for _, l := range []Limits{{}, {-1, 10}, {1, 0}, {10, 10}, {MaxPayloadBytes + 1, MaxMessageBytes}, {1, MaxMessageBytes + 1}} {
 		if l.Validate() == nil {
@@ -33,6 +38,8 @@ func TestLimitsValidation(t *testing.T) {
 	}
 }
 
+// TestExactPayloadBounds checks inclusive payload limits and object shape without confusing size
+// validity with domain completeness.
 func TestExactPayloadBounds(t *testing.T) {
 	l := DefaultLimits()
 	// One allocation covers the approved boundary and the first rejected byte.
@@ -56,6 +63,8 @@ func TestExactPayloadBounds(t *testing.T) {
 	}
 }
 
+// TestEncodedMessageBoundIncludesMetadataAndUnknownFields checks the protobuf size ceiling
+// includes envelope and unknown fields, not only application payload bytes.
 func TestEncodedMessageBoundIncludesMetadataAndUnknownFields(t *testing.T) {
 	r := &etlv1.SubmitRawBlockRequest{Payload: &etlv1.RawBlockPayload{BlockJson: []byte("{}")}, Metadata: &etlv1.EventMetadata{Provider: strings.Repeat("a", 100)}}
 	// Unknown future fields still consume the whole-message byte budget.
@@ -71,6 +80,8 @@ func TestEncodedMessageBoundIncludesMetadataAndUnknownFields(t *testing.T) {
 	}
 }
 
+// TestJSONObject distinguishes valid object payload boundaries from arrays, scalars and malformed
+// JSON.
 func TestJSONObject(t *testing.T) {
 	for _, s := range []string{"{}", " \n { \"amount\":123456789012345678901234567890 } "} {
 		if !JSONObject([]byte(s)) {
@@ -84,15 +95,20 @@ func TestJSONObject(t *testing.T) {
 	}
 }
 
+// sizeServer returns a controlled gRPC response size for transport boundary tests.
 type sizeServer struct {
 	etlv1.UnimplementedTransformerServiceServer
 	responseBytes int
 }
 
+// SubmitRawBlock implements the controlled gRPC peer/client callback so publication and ACK
+// failures can be tested deterministically.
 func (s *sizeServer) SubmitRawBlock(context.Context, *etlv1.SubmitRawBlockRequest) (*etlv1.SubmitRawBlockResponse, error) {
 	return &etlv1.SubmitRawBlockResponse{Acceptance: &etlv1.DurableAcceptance{EventId: strings.Repeat("a", s.responseBytes)}}, nil
 }
 
+// TestGRPCSendReceiveLimits checks request and response size enforcement on both peers.
+//
 // Exercise all four gRPC directions; a helper that configures only server
 // receive or client send would fail one of these independent cases.
 func TestGRPCSendReceiveLimits(t *testing.T) {

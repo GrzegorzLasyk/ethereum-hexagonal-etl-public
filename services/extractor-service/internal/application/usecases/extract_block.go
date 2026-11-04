@@ -1,3 +1,6 @@
+// extract_block.go implements single-block validation and the source/Outbox/checkpoint commit
+// boundary in the application orchestration layer.
+
 package usecases
 
 import (
@@ -9,6 +12,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
 
+// ExtractBlock coordinates validation and one atomic source/Outbox/checkpoint persistence
+// operation through ports.
 type ExtractBlock struct {
 	chain  domain.ChainID
 	start  uint64
@@ -16,8 +21,12 @@ type ExtractBlock struct {
 	store  outbound.ExtractionStore
 }
 
+// Compile-time interface assertion checks adapter/interface compatibility at compile time without
+// allocating runtime state.
 var _ inbound.BlockExtractor = (*ExtractBlock)(nil)
 
+// NewExtractBlock binds the explicit chain/start and source/store ports after validation;
+// construction performs no acquisition.
 func NewExtractBlock(chain domain.ChainID, start uint64, source outbound.BlockSource, store outbound.ExtractionStore) (*ExtractBlock, error) {
 	if err := chain.Validate(); err != nil {
 		return nil, fmt.Errorf("configure extractor: %w", err)
@@ -28,6 +37,8 @@ func NewExtractBlock(chain domain.ChainID, start uint64, source outbound.BlockSo
 	return &ExtractBlock{chain: chain, start: start, source: source, store: store}, nil
 }
 
+// ExtractBlock validates one requested identity and complete source snapshot before the atomic
+// checkpoint/Outbox commit boundary.
 func (u *ExtractBlock) ExtractBlock(ctx context.Context, request inbound.ExtractBlockRequest) (inbound.ExtractBlockResult, error) {
 	var result inbound.ExtractBlockResult
 	if err := ctx.Err(); err != nil {

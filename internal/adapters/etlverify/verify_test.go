@@ -1,3 +1,6 @@
+// verify_test.go exercises bounded durable pipeline completion decisions independent of readiness
+// alone in the shared technical support layer, outside service domains.
+
 package etlverify
 
 import (
@@ -10,6 +13,8 @@ import (
 	"time"
 )
 
+// healthy builds complete synthetic service observations for verifier tests; it is not a database
+// readiness check.
 func healthy(service string) Snapshot {
 	s := Snapshot{Ready: true, States: map[string]string{}, RawDigest: "raw", PayloadDigest: "payload", Provenance: "original", Members: []string{"tx1", "tx2"}}
 	if service != "extractor" {
@@ -20,6 +25,9 @@ func healthy(service string) Snapshot {
 	}
 	return s
 }
+
+// TestBoundedCompletionOffline requires all durable pipeline observations within a deadline and
+// rejects partial or failed completion.
 func TestBoundedCompletionOffline(t *testing.T) {
 	for _, kind := range []string{"success", "eventually", "partial", "failed", "stuck", "database", "mismatch", "missing", "cancel"} {
 		t.Run(kind, func(t *testing.T) {
@@ -99,6 +107,9 @@ func TestBoundedCompletionOffline(t *testing.T) {
 		})
 	}
 }
+
+// TestVerifierGuards checks incomplete configuration/observations fail closed instead of passing
+// on readiness or checkpoint alone.
 func TestVerifierGuards(t *testing.T) {
 	if _, err := Wait(t.Context(), func(context.Context, string, string) ([]byte, error) {
 		t.Fatal("query before bounds validation")
@@ -114,6 +125,8 @@ func TestVerifierGuards(t *testing.T) {
 	}
 }
 
+// TestKnownFailureSurvivesDownstreamObservationOutage requires a proven upstream terminal failure
+// to remain visible when a downstream observation is unavailable.
 func TestKnownFailureSurvivesDownstreamObservationOutage(t *testing.T) {
 	q := func(ctx context.Context, service, sql string) ([]byte, error) {
 		if service != "extractor" {

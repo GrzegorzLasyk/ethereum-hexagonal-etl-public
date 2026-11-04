@@ -1,3 +1,6 @@
+// dispatch.go implements durable delivery coordination and retry policy in the application
+// orchestration layer.
+
 package usecases
 
 import (
@@ -11,18 +14,25 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/application/ports/outbound"
 )
 
+// Dispatch coordinates one durable Outbox claim and downstream publication with finite jittered
+// retry policy.
 type Dispatch struct {
 	queue                    outbound.DeliveryQueue
 	publisher                outbound.Publisher
 	rpcTimeout, initial, max time.Duration
 }
 
+// NewDispatch validates queue, publisher and retry bounds; publication and persistence remain
+// injected ports.
 func NewDispatch(q outbound.DeliveryQueue, p outbound.Publisher, rpcTimeout, initial, max time.Duration) (*Dispatch, error) {
 	if q == nil || p == nil || rpcTimeout <= 0 || initial <= 0 || max < initial || max > 24*time.Hour {
 		return nil, fmt.Errorf("invalid dispatcher configuration")
 	}
 	return &Dispatch{q, p, rpcTimeout, initial, max}, nil
 }
+
+// DispatchOne claims one durable event, publishes outside the claim transaction, and records a
+// fenced delivery or bounded retry outcome.
 func (u *Dispatch) DispatchOne(ctx context.Context) (inbound.DispatchResult, error) {
 	item, err := u.queue.ClaimDelivery(ctx)
 	if err != nil {
@@ -73,6 +83,9 @@ func (u *Dispatch) DispatchOne(ctx context.Context) (inbound.DispatchResult, err
 	}
 	return result, nil
 }
+
+// deliveryBackoff computes capped exponential delay with jitter from the durable attempt number to
+// spread repeated failures.
 func (u *Dispatch) deliveryBackoff(attempt int) time.Duration {
 	delay := u.initial
 	for i := 1; i < attempt && delay < u.max; i++ {

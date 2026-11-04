@@ -1,3 +1,5 @@
+// main.go runs a bounded local HTTP readiness/metrics probe for Compose and operator diagnostics.
+
 // Command probe is the small HTTP readiness client used by Compose healthchecks.
 package main
 
@@ -8,6 +10,8 @@ import (
 	"time"
 )
 
+// main performs one bounded local HTTP probe, optionally printing its body, and exits nonzero on
+// failure.
 func main() {
 	args := os.Args[1:]
 	body := false

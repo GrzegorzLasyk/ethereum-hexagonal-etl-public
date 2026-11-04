@@ -1,3 +1,6 @@
+// process.go implements Inbox processing, validation and bounded failure orchestration in the
+// application orchestration layer.
+
 package usecases
 
 import (
@@ -12,6 +15,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/domain"
 )
 
+// Process coordinates a claimed Inbox item, codecs and atomic completion with bounded retry
+// classification.
 type Process struct {
 	queue        outbound.Queue
 	decoder      outbound.Decoder
@@ -19,12 +24,17 @@ type Process struct {
 	initial, max time.Duration
 }
 
+// NewProcess validates the queue/codec ports and backoff bounds before constructing an
+// asynchronous processing use case.
 func NewProcess(q outbound.Queue, d outbound.Decoder, e outbound.Encoder, initial, max time.Duration) (*Process, error) {
 	if q == nil || d == nil || e == nil || initial <= 0 || max < initial {
 		return nil, fmt.Errorf("invalid processing configuration")
 	}
 	return &Process{q, d, e, initial, max}, nil
 }
+
+// ProcessOne claims and processes one Inbox item, returning its identity/outcome; ambiguous
+// completion or a lost lease must not be followed by a failure mutation.
 func (u *Process) ProcessOne(ctx context.Context) (inbound.ProcessResult, error) {
 	item, err := u.queue.Claim(ctx)
 	if err != nil {
@@ -62,6 +72,9 @@ func (u *Process) ProcessOne(ctx context.Context) (inbound.ProcessResult, error)
 	}
 	return progress, nil
 }
+
+// transform decodes and validates raw source membership, binds envelope provenance and encodes a
+// deterministic transformed event.
 func (u *Process) transform(ctx context.Context, r inbound.AcceptRawBlockRequest) (outbound.Result, error) {
 	snapshot, err := u.decoder.Decode(ctx, r.RawBlock, r.RawReceipts, domain.ChainID(r.Block.ChainID))
 	if err != nil {
@@ -83,6 +96,9 @@ func (u *Process) transform(ctx context.Context, r inbound.AcceptRawBlockRequest
 	}
 	return outbound.Result{EventID: fmt.Sprintf("transformed-block/v1/%s/%d/%x", r.Block.ChainID, b.Number, b.Hash), PayloadVersion: 1, Payload: data}, nil
 }
+
+// classify separates permanent invalid/incomplete/identity failures from transient processing
+// errors using sentinel identities.
 func classify(err error) outbound.Failure {
 	for _, entry := range []struct {
 		err  error
@@ -96,6 +112,8 @@ func classify(err error) outbound.Failure {
 	}
 	return outbound.Failure{Code: "transient"}
 }
+
+// backoff calculates bounded exponential delay with jitter from the durable attempt number.
 func (u *Process) backoff(attempt int) time.Duration {
 	delay := u.initial
 	for i := 1; i < attempt && delay < u.max; i++ {

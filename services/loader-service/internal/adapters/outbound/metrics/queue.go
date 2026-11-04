@@ -1,3 +1,8 @@
+// queue.go implements persistence-port timing and outcome observations without changing queue
+// behavior in the outbound adapter layer.
+
+// Package metrics provides persistence-port timing and outcome observations without changing queue
+// behavior in the outbound adapter layer.
 package metrics
 
 import (
@@ -17,6 +22,8 @@ type Queue struct {
 	Registry *shared.Registry
 }
 
+// Complete times the wrapped persistence port and records its outcome without changing
+// commit/error semantics.
 func (q Queue) Complete(ctx context.Context, item outbound.Item, doc domain.Document) error {
 	started := time.Now()
 	err := q.Queue.Complete(ctx, item, doc)

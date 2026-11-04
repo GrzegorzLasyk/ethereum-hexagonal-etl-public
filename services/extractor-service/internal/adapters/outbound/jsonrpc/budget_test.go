@@ -1,3 +1,6 @@
+// budget_test.go exercises shared request/run budget exhaustion and cancellation in the outbound
+// adapter layer.
+
 package jsonrpc
 
 import (
@@ -14,6 +17,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/application/ports/outbound"
 )
 
+// TestRequestBudgetCoversBlockReceiptsAndRecoveryHeaders counts acquisition, receipts, chain
+// checks and recovery observations against one actual-attempt budget.
 func TestRequestBudgetCoversBlockReceiptsAndRecoveryHeaders(t *testing.T) {
 	f := serveFixtures(t, fixture(t, "block"), [2][]byte{fixture(t, "receipt_0"), fixture(t, "receipt_1")})
 	cfg := testConfig(f.server.URL)
@@ -43,6 +48,8 @@ func TestRequestBudgetCoversBlockReceiptsAndRecoveryHeaders(t *testing.T) {
 	}
 }
 
+// TestBudgetRejectsPartialSnapshot exhausts acquisition allowance before all receipts complete and
+// requires no committable partial result.
 func TestBudgetRejectsPartialSnapshot(t *testing.T) {
 	f := serveFixtures(t, fixture(t, "block"), [2][]byte{fixture(t, "receipt_0"), fixture(t, "receipt_1")})
 	cfg := testConfig(f.server.URL)
@@ -54,6 +61,8 @@ func TestBudgetRejectsPartialSnapshot(t *testing.T) {
 	}
 }
 
+// TestBudgetIncludesRetriesAndConcurrentAttempts races transport attempts and retries against one
+// shared allowance so logical-call accounting cannot undercount usage.
 func TestBudgetIncludesRetriesAndConcurrentAttempts(t *testing.T) {
 	for _, concurrent := range []bool{false, true} {
 		t.Run(map[bool]string{false: "retry", true: "concurrent"}[concurrent], func(t *testing.T) {
@@ -83,10 +92,15 @@ func TestBudgetIncludesRetriesAndConcurrentAttempts(t *testing.T) {
 	}
 }
 
+// budgetTransport injects HTTP transport outcomes to test accounting without provider access.
 type budgetTransport func(*http.Request) (*http.Response, error)
 
+// RoundTrip implements the test HTTP transport with controlled responses/failures; it never
+// selects a live Ethereum endpoint.
 func (f budgetTransport) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
+// TestRunDeadlineCancelsRPCWithoutRetry requires expiration to stop the active request path and
+// prevent additional retry attempts.
 func TestRunDeadlineCancelsRPCWithoutRetry(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		cfg := testConfig("https://example.invalid/secret")

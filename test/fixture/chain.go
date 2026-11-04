@@ -1,3 +1,6 @@
+// chain.go constructs explicitly synthetic deterministic Ethereum RPC blocks and receipts for
+// local tests; it contains no authentic Mainnet captures.
+
 // Package fixture supplies a synthetic, bounded chain for local integration tests.
 // Identities are deterministic labels, not cryptographically valid Ethereum hashes.
 package fixture
@@ -9,9 +12,14 @@ import (
 	"strings"
 )
 
+// Start is the first synthetic fixture height, not a Mainnet acquisition default.
 const Start uint64 = 100
+
+// Last bounds the deterministic synthetic fixture chain used by offline scenarios.
 const Last uint64 = 110
 
+// Hash derives a deterministic synthetic block hash from its height and branch; it is not a
+// cryptographic Ethereum header hash.
 func Hash(n uint64, fork bool) string {
 	branch := "a"
 	if fork && n >= 102 {
@@ -19,10 +27,16 @@ func Hash(n uint64, fork bool) string {
 	}
 	return digest(fmt.Sprintf("stage11-block-%s-%d", branch, n))
 }
+
+// TxHash derives a deterministic synthetic transaction identity from block position and branch.
 func TxHash(n uint64, fork bool, index int) string {
 	return digest(fmt.Sprintf("%s-tx-%d", Hash(n, fork), index))
 }
-func digest(s string) string   { return fmt.Sprintf("0x%x", sha256.Sum256([]byte(s))) }
+
+// digest hashes the fixture seed into a stable 32-byte identity for reproducible tests.
+func digest(s string) string { return fmt.Sprintf("0x%x", sha256.Sum256([]byte(s))) }
+
+// quantity formats a deterministic synthetic integer as an Ethereum RPC hex quantity.
 func quantity(n uint64) string { return fmt.Sprintf("0x%x", n) }
 
 // Block generates two transactions, two receipts and one log per observation.

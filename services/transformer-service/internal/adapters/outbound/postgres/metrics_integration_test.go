@@ -1,5 +1,8 @@
 //go:build postgresintegration
 
+// metrics_integration_test.go exercises owning-schema metric snapshots and database-failure
+// behavior in the outbound adapter layer.
+
 package postgres
 
 import (
@@ -9,6 +12,8 @@ import (
 	"time"
 )
 
+// testMetrics compares owning-schema metric snapshots with controlled queue state and database-
+// failure/recovery cases.
 func testMetrics(t *testing.T, runtime, owner *pgxpool.Pool) {
 	ctx := t.Context()
 	if _, err := owner.Exec(ctx, "TRUNCATE transformer.inbox_events CASCADE"); err != nil {

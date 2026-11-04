@@ -1,3 +1,8 @@
+// lifecycle.go implements finite producer completion without canceling the still-needed dispatcher
+// in the service composition/operator entry point.
+
+// Package main wires Extractor acquisition, dispatch and operator modes and owns bounded startup,
+// drain and shutdown.
 package main
 
 import "context"

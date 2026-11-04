@@ -1,3 +1,6 @@
+// batch.go implements bounded pgx INSERT grouping and batch-result cleanup inside a block
+// transaction in the outbound adapter layer.
+
 package postgres
 
 import (
@@ -9,18 +12,30 @@ import (
 )
 
 const (
+	// DefaultBatchSize sets the conservative number of INSERT statements per Loader pgx batch.
 	DefaultBatchSize = 64
-	MaxBatchSize     = 256
+	// MaxBatchSize caps queued statement count independently of the batch byte estimate.
+	MaxBatchSize = 256
 	// This bounds coalescing, not the size of one otherwise valid source row.
-	batchByteBudget        = 1 << 20
+	batchByteBudget = 1 << 20
+	// maxStatementParameters bounds parameters in one PostgreSQL statement, not the sum of separate
+	// batched statements.
 	maxStatementParameters = 65535
 )
 
+// recordExecutor is the minimal parameterized INSERT dependency, implemented by direct and bounded
+// batch executors.
 type recordExecutor interface {
+	// Exec executes or queues a parameterized statement inside the caller-owned transaction.
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 }
+
+// batchExecutor adds pgx batch submission to the record executor used inside a single completion
+// transaction.
 type batchExecutor interface {
 	recordExecutor
+	// SendBatch submits queued statements inside the same transaction; results must be consumed and
+	// closed before further SQL.
 	SendBatch(context.Context, *pgx.Batch) pgx.BatchResults
 }
 
@@ -34,6 +49,8 @@ type recordBatch struct {
 	err   error
 }
 
+// Exec queues an INSERT or executes an oversized/direct-mode statement, flushing at count/byte
+// bounds; it does not commit the block transaction.
 func (b *recordBatch) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
 	if b.err != nil {
 		return pgconn.CommandTag{}, b.err
@@ -69,6 +86,8 @@ func (b *recordBatch) Exec(ctx context.Context, sql string, args ...any) (pgconn
 	return pgconn.CommandTag{}, err
 }
 
+// flush consumes and closes queued pgx results before further SQL, retaining the first failure so
+// the enclosing block can roll back.
 func (b *recordBatch) flush(ctx context.Context) error {
 	if b.err != nil {
 		return b.err
@@ -115,6 +134,8 @@ func statementSize(sql string, args []any) (int, error) {
 	return size, nil
 }
 
+// argumentSize estimates supported pgx argument storage for the fixed record mappings; unsupported
+// parameter types fail explicitly.
 func argumentSize(arg any) (int, error) {
 	switch v := arg.(type) {
 	case nil, bool:

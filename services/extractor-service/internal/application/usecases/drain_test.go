@@ -1,3 +1,6 @@
+// drain_test.go exercises bounded verification of durable outgoing range delivery in the
+// application orchestration layer.
+
 package usecases
 
 import (
@@ -10,11 +13,18 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/application/ports/outbound"
 )
 
+// drainReader supplies controlled pending/failed/delivered range observations for bounded drain
+// tests.
 type drainReader func(context.Context, uint64, uint64) (outbound.RangeDelivery, error)
 
+// RangeDelivery delegates to the injected test callback, allowing controlled completion, blocking
+// or failure at the application port.
 func (f drainReader) RangeDelivery(c context.Context, a, b uint64) (outbound.RangeDelivery, error) {
 	return f(c, a, b)
 }
+
+// TestDrain distinguishes fully delivered range, retained failure and deadline/cancellation
+// without modifying queue state.
 func TestDrain(t *testing.T) {
 	for _, kind := range []string{"delayed", "timeout", "failed", "database", "cancel"} {
 		t.Run(kind, func(t *testing.T) {

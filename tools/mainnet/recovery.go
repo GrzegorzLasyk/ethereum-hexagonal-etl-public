@@ -1,3 +1,6 @@
+// recovery.go implements explicit bounded restart, replay, repair and reindex operator commands in
+// the local operator tooling.
+
 package main
 
 import (
@@ -8,11 +11,15 @@ import (
 	"strings"
 )
 
+// recoveryRequest holds parsed bounded repair/replay/reindex arguments before private operator
+// execution.
 type recoveryRequest struct {
 	service, queue, event, operation string
 	allowance                        int
 }
 
+// parseRecovery validates an explicit operator recovery action and its bounded event/range
+// arguments before dispatch.
 func parseRecovery(args []string) (recoveryRequest, error) {
 	var r recoveryRequest
 	switch {
@@ -48,9 +55,15 @@ func parseRecovery(args []string) (recoveryRequest, error) {
 	}
 	return r, nil
 }
+
+// operationID validates the audit identity used to make an operator action safely repeatable after
+// uncertain acknowledgement.
 func operationID(id string) bool {
 	return regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}$`).MatchString(id)
 }
+
+// recoveryArgs builds the bounded owning-service recovery environment without enabling new
+// acquisition.
 func recoveryArgs(action, project string, r recoveryRequest) []string {
 	name := project + "-acquisition"
 	if action == "repair" {

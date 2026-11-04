@@ -1,3 +1,6 @@
+// store.go implements durable acceptance, transactional state changes and safe database error
+// mapping in the outbound adapter layer.
+
 // Package postgres implements Extractor-owned atomic persistence.
 package postgres
 
@@ -16,10 +19,18 @@ import (
 )
 
 var (
-	ErrDatabase      = errors.New("extractor database operation failed")
+	// ErrDatabase signals extractor database operation failed. Callers can match this category with
+	// errors.Is without parsing error text.
+	ErrDatabase = errors.New("extractor database operation failed")
+	// ErrCommitUnknown aliases the application uncertainty category so callers do not infer rollback
+	// from a lost COMMIT acknowledgement.
 	ErrCommitUnknown = outbound.ErrCommitUnknown
-	ErrCorrupt       = errors.New("inconsistent stored extraction")
-	ErrNotFound      = errors.New("stored extraction not found")
+	// ErrCorrupt signals inconsistent stored extraction. Callers can match this category with
+	// errors.Is without parsing error text.
+	ErrCorrupt = errors.New("inconsistent stored extraction")
+	// ErrNotFound signals stored extraction not found. Callers can match this category with errors.Is
+	// without parsing error text.
+	ErrNotFound = errors.New("stored extraction not found")
 )
 
 // DatabaseError omits server messages/details that may contain source data or
@@ -27,9 +38,14 @@ var (
 // that silently advances a checkpoint.
 type DatabaseError struct{ SQLState string }
 
+// Error returns a safe database diagnostic without leaking server details or credentials.
 func (e *DatabaseError) Error() string { return "extractor database SQLSTATE " + e.SQLState }
+
+// Unwrap exposes the classified cause to errors.Is/errors.As without changing the safe error text.
 func (e *DatabaseError) Unwrap() error { return ErrDatabase }
 
+// databaseError classifies database failures without leaking SQL/DSN details and preserves
+// cancellation or conflict identity.
 func databaseError(err error) error {
 	if errors.Is(err, context.Canceled) {
 		return context.Canceled
@@ -44,17 +60,26 @@ func databaseError(err error) error {
 	return ErrDatabase
 }
 
+// database is the pgx operation subset used by the adapter and its fault-injection tests; it is
+// not an application port.
 type database interface {
+	// BeginTx starts an adapter-owned database transaction with the supplied options; the caller owns
+	// completion/rollback.
 	BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error)
+	// QueryRow returns one query result whose Scan reports execution/decoding failure.
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
+// Store binds owning-schema source persistence to one configured chain and start height.
+// Its caller-owned database pool must outlive extraction and delivery operations.
 type Store struct {
 	db    database
 	chain domain.ChainID
 	start uint64
 }
 
+// Compile-time interface assertion checks adapter/interface compatibility at compile time without
+// allocating runtime state.
 var _ outbound.ExtractionStore = (*Store)(nil)
 
 // New borrows a pool authenticated as extractor_runtime in ethereum_etl.
@@ -70,9 +95,13 @@ func New(pool *pgxpool.Pool, chain domain.ChainID, start uint64) (*Store, error)
 	return &Store{db: pool, chain: chain, start: start}, nil
 }
 
+// checkpointSQL selects full durable cursor/start/revision fields required for expected-checkpoint
+// fencing.
 const checkpointSQL = `SELECT block_number::text, block_hash, revision, start_number::text
 FROM extractor.extraction_checkpoints WHERE chain_id = $1`
 
+// readCheckpoint decodes the last committed block/start/revision; absence is distinct from a
+// corrupt checkpoint.
 func readCheckpoint(row pgx.Row, chain domain.ChainID) (*domain.Checkpoint, error) {
 	var number, start string
 	var revision uint64
@@ -98,6 +127,8 @@ func readCheckpoint(row pgx.Row, chain domain.ChainID) (*domain.Checkpoint, erro
 	return cp, nil
 }
 
+// Checkpoint reads the last durable active cursor for the configured chain; it does not imply
+// downstream completion.
 func (s *Store) Checkpoint(ctx context.Context, chain domain.ChainID) (*domain.Checkpoint, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -115,10 +146,14 @@ func (s *Store) Checkpoint(ctx context.Context, chain domain.ChainID) (*domain.C
 	return cp, err
 }
 
+// sameCheckpoint compares the expected block, start and revision so an old writer cannot survive a
+// rewind/return to the same tip.
 func sameCheckpoint(a, b *domain.Checkpoint) bool {
 	return a == nil && b == nil || a != nil && b != nil && a.Block == b.Block && a.Revision == b.Revision
 }
 
+// Commit serializes the chain, fences the expected checkpoint and atomically retains raw data,
+// Outbox intent, active membership and progress.
 func (s *Store) Commit(ctx context.Context, command outbound.CommitExtraction) (outbound.CommitResult, error) {
 	var result outbound.CommitResult
 	if err := ctx.Err(); err != nil {

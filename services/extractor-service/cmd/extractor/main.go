@@ -1,3 +1,6 @@
+// main.go implements command startup, explicit adapter wiring and bounded resource lifetime in the
+// service composition/operator entry point.
+
 package main
 
 import (
@@ -27,6 +30,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// main invokes the bounded service/operator entry point and exits nonzero on startup or execution
+// failure.
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -43,6 +48,9 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+// run wires the configured service adapters/use cases, starts bounded workers/listeners and joins
+// resources during shutdown.
 func run(ctx context.Context, cfg config.Config, logger *slog.Logger) error {
 	return runWithinBudget(ctx, cfg.Indexing.RunTimeout, func(ctx context.Context) error { return runServices(ctx, cfg, logger) })
 }
@@ -62,6 +70,8 @@ func runWithinBudget(ctx context.Context, duration time.Duration, operation func
 	return err
 }
 
+// runServices wires the configured service adapters/use cases, starts bounded workers/listeners
+// and joins resources during shutdown.
 func runServices(ctx context.Context, cfg config.Config, logger *slog.Logger) (returnedErr error) {
 	started := time.Now()
 	// Replay names an event before any database I/O. Keep that identity even if

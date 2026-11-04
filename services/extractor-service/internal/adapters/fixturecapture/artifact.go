@@ -1,3 +1,6 @@
+// artifact.go implements exclusive capture publication and offline raw-byte/integrity verification
+// in the Extractor fixture/operator adapter.
+
 package fixturecapture
 
 import (
@@ -18,6 +21,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
 
+// Artifact preserves raw result bytes inside a versioned capture envelope.
+//
 // Byte slices use JSON base64: unlike RawMessage, encoding them cannot compact,
 // reformat or discard unknown fields from the original RPC result bytes.
 type Artifact struct {
@@ -33,11 +38,18 @@ type Artifact struct {
 	RawReceipts [][]byte            `json:"raw_receipts_base64"`
 }
 
+// Source is the bounded block-acquisition dependency used by capture, including actual attempt
+// accounting.
 type Source interface {
+	// Block returns a complete ordered raw snapshot for the height or an error; partial receipt
+	// batches are not valid results.
 	Block(context.Context, uint64) (domain.Extraction, error)
+	// Requests reports actual source request attempts for the bounded capture artifact.
 	Requests() uint64
 }
 
+// digests computes SHA-256 identities of the retained raw block and ordered receipts without
+// reserializing their contents.
 func digests(block []byte, receipts [][]byte) []string {
 	d := []string{fmt.Sprintf("%x", sha256.Sum256(block))}
 	for _, r := range receipts {
@@ -46,6 +58,8 @@ func digests(block []byte, receipts [][]byte) []string {
 	return d
 }
 
+// dimensions derives transaction-type, receipt-outcome, creation and log coverage from decoded
+// source data.
 func dimensions(e domain.Extraction) (Counts, map[string][]string, error) {
 	var block struct {
 		Transactions []struct {
@@ -196,6 +210,8 @@ func containsSecret(data []byte, secrets []string) bool {
 	return visit(value)
 }
 
+// ValidateFile validates a captured artifact offline and returns its observed coverage; it does
+// not fetch replacement data.
 func ValidateFile(ctx context.Context, path string) error {
 	a, err := readArtifact(path)
 	if err != nil {
@@ -212,6 +228,8 @@ func VerifyFile(ctx context.Context, path string, expected Candidate, secrets []
 	return err
 }
 
+// readVerified loads an artifact, validates its manifest binding and source integrity, and returns
+// the checked in-memory data.
 func readVerified(ctx context.Context, path string, expected Candidate, secrets []string) (Artifact, error) {
 	a, err := readArtifact(path)
 	if err != nil {
@@ -229,6 +247,7 @@ func readVerified(ctx context.Context, path string, expected Candidate, secrets 
 	return a, nil
 }
 
+// readArtifact reads and decodes a bounded capture file before any replay or digest validation.
 func readArtifact(path string) (Artifact, error) {
 	var a Artifact
 	f, err := os.Open(path)
@@ -246,6 +265,8 @@ func readArtifact(path string) (Artifact, error) {
 	return a, nil
 }
 
+// checkSecrets rejects credential/endpoint traces in a capture rather than writing or reporting
+// sensitive source bytes.
 func (a Artifact) checkSecrets(secrets []string) error {
 	for _, raw := range append([][]byte{a.RawBlock}, a.RawReceipts...) {
 		if containsSecret(raw, secrets) {
@@ -259,6 +280,8 @@ func (a Artifact) checkSecrets(secrets []string) error {
 	return nil
 }
 
+// Validate checks pinned identity, raw digests, complete receipt membership and recorded coverage
+// using offline production decoding.
 func (a Artifact) Validate(ctx context.Context) error {
 	if a.Version != 1 || a.Candidate.Validate() != nil || a.Provider != "infura-mainnet" || a.AcquiredAt.IsZero() || a.Attempts < uint64(a.Candidate.Counts.Transactions)+3 || a.Attempts > 1000 || len(a.RawReceipts) != a.Candidate.Counts.Transactions {
 		return ErrFixture
@@ -301,8 +324,12 @@ func (a Artifact) Validate(ctx context.Context) error {
 	return a.checkSecrets(nil)
 }
 
+// localTransport implements HTTP transport as an injected function for network-free captured
+// response replay.
 type localTransport func(*http.Request) (*http.Response, error)
 
+// RoundTrip replays only captured methods/identities in memory and rejects unsupported requests
+// without a network fallback.
 func (t localTransport) RoundTrip(r *http.Request) (*http.Response, error) { return t(r) }
 
 // Validation reuses the production decoder with an in-memory-only transport.

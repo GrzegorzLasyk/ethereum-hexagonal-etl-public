@@ -1,3 +1,6 @@
+// repair.go implements audited finite retry allowance and recovery guards in the outbound adapter
+// layer.
+
 package postgres
 
 import (
@@ -8,8 +11,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// Compile-time interface assertion checks adapter/interface compatibility at compile time without
+// allocating runtime state.
 var _ outbound.RepairStore = (*Store)(nil)
 
+// Repair grants an audited finite retry allowance in the owning schema and fences prior claims; it
+// never deletes accepted work.
 func (s *Store) Repair(ctx context.Context, r outbound.RepairRequest) error {
 	if err := r.Validate(string(s.chain)); err != nil {
 		return err

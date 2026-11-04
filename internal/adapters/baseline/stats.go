@@ -1,3 +1,6 @@
+// stats.go implements bounded duration sampling and reproducible baseline summaries in the shared
+// technical support layer, outside service domains.
+
 package baseline
 
 import (
@@ -15,8 +18,10 @@ type Distribution struct {
 	Samples    []float64 `json:"-"`
 }
 
+// SampleLimit caps retained latency samples while aggregate counts remain available.
 const SampleLimit = 100000
 
+// Add adds a duration to bounded samples while retaining aggregate count/total information.
 func (d *Distribution) Add(seconds float64) {
 	if seconds < 0 || math.IsNaN(seconds) || math.IsInf(seconds, 0) {
 		return
@@ -27,6 +32,8 @@ func (d *Distribution) Add(seconds float64) {
 		d.Samples = append(d.Samples, seconds)
 	}
 }
+
+// Summary sorts a copy of retained samples to report quantiles without mutating observation order.
 func (d Distribution) Summary() Distribution {
 	d.P50, d.P95 = nil, nil
 	if d.Count > 0 && d.Count == uint64(len(d.Samples)) {

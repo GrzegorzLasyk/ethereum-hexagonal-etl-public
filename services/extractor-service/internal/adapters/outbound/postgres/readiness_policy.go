@@ -1,3 +1,6 @@
+// readiness_policy.go implements required schema objects, migration identities and runtime
+// privilege policy in the outbound adapter layer.
+
 package postgres
 
 import "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/dbreadiness"

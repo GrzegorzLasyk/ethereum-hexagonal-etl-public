@@ -1,3 +1,6 @@
+// reliability_test.go exercises RPC classification, Retry-After and retry policy across worker
+// cycles in the outbound adapter layer.
+
 package jsonrpc
 
 import (
@@ -20,23 +23,31 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
 
+// rpcCycle counts worker cycles that query a controlled RPC client, exposing cross-cycle retry
+// policy.
 type rpcCycle struct {
 	client *Client
 	calls  int
 }
 
+// Cycle counts one controlled chain-ID operation and reports completion only on success, exposing
+// worker retry behavior.
 func (u *rpcCycle) Cycle(ctx context.Context) (inbound.IndexResult, error) {
 	u.calls++
 	_, err := u.client.ChainID(ctx)
 	return inbound.IndexResult{Done: err == nil}, err
 }
 
+// rpcResponse builds an HTTP response for the injected transport, preserving the requested
+// body/status for failure classification.
 func rpcResponse(r *http.Request, body string, code int) *http.Response {
 	var q wireRequest
 	_ = json.NewDecoder(r.Body).Decode(&q)
 	return &http.Response{StatusCode: code, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,%s}`, q.ID, body)))}
 }
 
+// TestRPCPolicyAcrossWorkerCycles checks finite retry/error policy across indexing cycles.
+//
 // Real adapter retries and real worker cycles share a deterministic virtual clock.
 func TestRPCPolicyAcrossWorkerCycles(t *testing.T) {
 	for _, tc := range []struct {
@@ -109,6 +120,8 @@ func TestRPCPolicyAcrossWorkerCycles(t *testing.T) {
 	}
 }
 
+// TestRetryAfterTimingAndCycleHalt checks provider cooldown survives logical/cycle boundaries and
+// terminal source policy halts repeated acquisition.
 func TestRetryAfterTimingAndCycleHalt(t *testing.T) {
 	for _, mode := range []string{"seconds", "date", "too long", "exhausted", "cancel backoff", "cancel pacing"} {
 		t.Run(mode, func(t *testing.T) {
@@ -191,16 +204,24 @@ func TestRetryAfterTimingAndCycleHalt(t *testing.T) {
 	}
 }
 
+// unreadableBody injects response read failures and records closure for HTTP cleanup tests.
 type unreadableBody struct {
 	reads  int
 	closed bool
 }
 
+// Read records attempted response-body access and returns a controlled read failure.
 func (b *unreadableBody) Read([]byte) (int, error) {
 	b.reads++
 	return 0, errors.New("private-body-failure")
 }
+
+// Close implements test-owned cleanup and records/releases the controlled resource when
+// applicable.
 func (b *unreadableBody) Close() error { b.closed = true; return nil }
+
+// TestPermanentHTTPClassificationDoesNotReadErrorBody requires permanent authentication/account
+// failures to be classified without consuming sensitive or unreadable response bodies.
 func TestPermanentHTTPClassificationDoesNotReadErrorBody(t *testing.T) {
 	for _, code := range []int{401, 402, 403} {
 		body := &unreadableBody{}

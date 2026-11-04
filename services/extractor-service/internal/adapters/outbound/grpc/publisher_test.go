@@ -1,3 +1,6 @@
+// publisher_test.go exercises one-call gRPC publication and durable-ACK/error classification in
+// the outbound adapter layer.
+
 package grpc
 
 import (
@@ -21,18 +24,27 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// recipient implements a controlled generated gRPC peer using an injected response callback.
 type recipient struct {
 	etlv1.UnimplementedTransformerServiceServer
 	handle func(context.Context, *etlv1.SubmitRawBlockRequest) (*etlv1.SubmitRawBlockResponse, error)
 }
 
+// SubmitRawBlock implements the controlled gRPC peer/client callback so publication and ACK
+// failures can be tested deterministically.
 func (r *recipient) SubmitRawBlock(c context.Context, p *etlv1.SubmitRawBlockRequest) (*etlv1.SubmitRawBlockResponse, error) {
 	return r.handle(c, p)
 }
+
+// publication builds a deterministic valid event envelope so tests can isolate one invalid field
+// or ACK behavior.
 func publication() outbound.Publication {
 	h, p := [32]byte{1}, [32]byte{2}
 	return outbound.Publication{EventID: fmt.Sprintf("raw-block/v1/1/42/%x", h), ChainID: "1", Number: 42, Hash: h, ParentHash: p, Provider: "fixture", ExtractedAt: time.Unix(100, 123), RawBlock: []byte(" { } "), RawReceipts: [][]byte{[]byte("{}")}}
 }
+
+// testPublisher constructs a publisher against a controlled recipient and arranges
+// connection/server cleanup.
 func testPublisher(t *testing.T, handle func(context.Context, *etlv1.SubmitRawBlockRequest) (*etlv1.SubmitRawBlockResponse, error)) *Publisher {
 	t.Helper()
 	listener := bufconn.Listen(1 << 20)
@@ -47,6 +59,9 @@ func testPublisher(t *testing.T, handle func(context.Context, *etlv1.SubmitRawBl
 	t.Cleanup(func() { conn.Close(); server.Stop(); listener.Close(); <-done })
 	return &Publisher{client: etlv1.NewTransformerServiceClient(conn), conn: conn, chain: "1", limits: grpccontract.DefaultLimits()}
 }
+
+// TestPublishVerifiedACKAndExactRetry checks matching durable ACKs and that repeated publication
+// preserves event identity and payload bytes.
 func TestPublishVerifiedACKAndExactRetry(t *testing.T) {
 	event := publication()
 	var mu sync.Mutex
@@ -79,6 +94,9 @@ func TestPublishVerifiedACKAndExactRetry(t *testing.T) {
 		t.Fatal("wire content/provenance changed")
 	}
 }
+
+// TestPublishFailures checks safe permanent/transient classification and rejects malformed or
+// mismatched durable ACKs.
 func TestPublishFailures(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -118,10 +136,14 @@ func TestPublishFailures(t *testing.T) {
 // client-stream and server deadline timers.
 type publishClientFunc func(context.Context, *etlv1.SubmitRawBlockRequest) (*etlv1.SubmitRawBlockResponse, error)
 
+// SubmitRawBlock implements the controlled gRPC peer/client callback so publication and ACK
+// failures can be tested deterministically.
 func (f publishClientFunc) SubmitRawBlock(ctx context.Context, r *etlv1.SubmitRawBlockRequest, _ ...transport.CallOption) (*etlv1.SubmitRawBlockResponse, error) {
 	return f(ctx, r)
 }
 
+// TestPublishLocalBudgetsAndCancellation checks caller cancellation/deadline enforcement without
+// relying on scheduler-sensitive sleeps or a hidden publisher retry loop.
 func TestPublishLocalBudgetsAndCancellation(t *testing.T) {
 	calls := 0
 	p := &Publisher{chain: "1", limits: grpccontract.DefaultLimits(), client: publishClientFunc(func(c context.Context, _ *etlv1.SubmitRawBlockRequest) (*etlv1.SubmitRawBlockResponse, error) {
@@ -163,6 +185,8 @@ func TestPublishLocalBudgetsAndCancellation(t *testing.T) {
 	defer conn.Close()
 }
 
+// TestPublishCancellationInFlight checks cancellation of an already-started RPC.
+//
 // Exercise cancellation over real gRPC only after the handler has started.
 // No propagated deadline races with cancellation of the caller's context.
 func TestPublishCancellationInFlight(t *testing.T) {
@@ -206,6 +230,8 @@ func TestPublishCancellationInFlight(t *testing.T) {
 	}
 }
 
+// TestPublishReceiverOverloadIsRetryable requires explicit overload to remain transient while
+// permanent size failures stay terminal.
 func TestPublishReceiverOverloadIsRetryable(t *testing.T) {
 	p := testPublisher(t, func(context.Context, *etlv1.SubmitRawBlockRequest) (*etlv1.SubmitRawBlockResponse, error) {
 		return nil, grpccontract.Overloaded()

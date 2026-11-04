@@ -1,3 +1,6 @@
+// config_test.go exercises validated environment configuration and conservative startup limits in
+// the startup configuration boundary.
+
 package config_test
 
 import (
@@ -7,6 +10,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/config"
 )
 
+// TestLoad checks required identities and environment parsing fail safely before startup with
+// invalid settings.
 func TestLoad(t *testing.T) {
 	t.Setenv("EXTRACTOR_DATABASE_URL", "postgres://placeholder")
 	t.Setenv("EXTRACTOR_CHAIN_ID", "1")

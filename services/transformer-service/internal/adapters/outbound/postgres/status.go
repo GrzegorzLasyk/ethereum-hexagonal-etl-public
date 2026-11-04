@@ -1,3 +1,6 @@
+// status.go implements owning-schema queue/progress snapshots for operational visibility in the
+// outbound adapter layer.
+
 package postgres
 
 import (
@@ -8,6 +11,8 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// Compile-time interface assertion checks adapter/interface compatibility at compile time without
+// allocating runtime state.
 var _ outbound.StatusReader = (*Store)(nil)
 
 // ReadStatus uses one read-only repeatable snapshot and only service-owned tables.

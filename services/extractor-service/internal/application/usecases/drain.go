@@ -1,3 +1,6 @@
+// drain.go implements bounded verification of durable outgoing range delivery in the application
+// orchestration layer.
+
 package usecases
 
 import (

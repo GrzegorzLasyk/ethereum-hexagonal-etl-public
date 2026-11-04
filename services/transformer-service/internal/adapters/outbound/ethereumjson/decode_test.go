@@ -1,3 +1,6 @@
+// decode_test.go exercises strict source/document decoding into service-owned domain values in the
+// outbound adapter layer.
+
 package ethereumjson_test
 
 import (
@@ -17,6 +20,7 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/domain"
 )
 
+// fixtures loads committed deterministic source JSON used for offline decoder and transport tests.
 func fixtures(t *testing.T) ([]byte, [][]byte) {
 	t.Helper()
 	read := func(name string) []byte {
@@ -28,6 +32,9 @@ func fixtures(t *testing.T) ([]byte, [][]byte) {
 	}
 	return read("block.json"), [][]byte{read("receipt_0.json"), read("receipt_1.json")}
 }
+
+// TestDeterministicExactOutput compares repeat normalized output and exact value/optional-field
+// representation from controlled source JSON.
 func TestDeterministicExactOutput(t *testing.T) {
 	b, r := fixtures(t)
 	b = bytes.Replace(b, []byte(`"value": "0x0"`), []byte(`"value": "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"`), 1)
@@ -88,6 +95,9 @@ func TestDeterministicExactOutput(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestMalformedAndIncompleteInput mutates JSON shapes/required fields and rejects incomplete
+// source rather than normalizing invented defaults.
 func TestMalformedAndIncompleteInput(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -146,6 +156,9 @@ func TestMalformedAndIncompleteInput(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// TestHistoricalAndOptionalValues checks historical receipt roots and absent/null/value
+// distinctions in normalized output.
 func TestHistoricalAndOptionalValues(t *testing.T) {
 	b, r := fixtures(t)
 	var block map[string]json.RawMessage
@@ -187,6 +200,8 @@ func TestHistoricalAndOptionalValues(t *testing.T) {
 	}
 }
 
+// TestTypedTransactionNormalization checks the type-dependent fee, access, blob and authorization
+// representations against deterministic source cases.
 func TestTypedTransactionNormalization(t *testing.T) {
 	for _, kind := range []int{1, 2, 3, 4} {
 		t.Run(fmt.Sprint(kind), func(t *testing.T) {
@@ -274,6 +289,8 @@ func TestTypedTransactionNormalization(t *testing.T) {
 	}
 }
 
+// TestEmptyBlockCollections checks explicit empty collections and historical receipt
+// representation without inventing modern fields.
 func TestEmptyBlockCollections(t *testing.T) {
 	b, _ := fixtures(t)
 	var block map[string]json.RawMessage
