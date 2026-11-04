@@ -1,3 +1,8 @@
+// accept.go implements envelope validation before durable Inbox acceptance in the application
+// orchestration layer.
+
+// Package usecases orchestrates the service domain through ports, including validation, durable
+// processing and bounded recovery; concrete I/O belongs to adapters.
 package usecases
 
 import (
@@ -9,18 +14,24 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/domain"
 )
 
+// Accept validates an incoming envelope before invoking the durable Inbox acceptance port.
 type Accept struct {
 	chain    domain.ChainID
 	maxBytes int
 	inbox    outbound.Inbox
 }
 
+// NewAccept validates acceptance dependencies and payload/chain bounds without opening a listener
+// or writing input.
 func NewAccept(chain domain.ChainID, maxBytes int, inbox outbound.Inbox) (*Accept, error) {
 	if !chain.Valid() || maxBytes <= 0 || maxBytes > 64<<20 || inbox == nil {
 		return nil, fmt.Errorf("invalid acceptance configuration")
 	}
 	return &Accept{chain, maxBytes, inbox}, nil
 }
+
+// AcceptRawBlock validates the application envelope before storage and distinguishes newly
+// committed from identical already-accepted input.
 func (u *Accept) AcceptRawBlock(ctx context.Context, r inbound.AcceptRawBlockRequest) (inbound.AcceptanceResult, error) {
 	if err := ctx.Err(); err != nil {
 		return inbound.AcceptanceResult{}, err

@@ -1,3 +1,6 @@
+// rpc.go implements actual RPC attempt/retry/budget metrics with process restart semantics in the
+// shared technical support layer, outside service domains.
+
 package metrics
 
 import (
@@ -5,11 +8,15 @@ import (
 	"fmt"
 )
 
+// rpcMetrics stores process-lifetime request/retry counters and the configured finite budget, if
+// enabled.
 type rpcMetrics struct {
 	enabled                  bool
 	limit, attempts, retries uint64
 }
 
+// ConfigureRPC sets the fixed RPC execution limits for metric exposition.
+//
 // One registry belongs to one service process and its single acquisition client.
 func (r *Registry) ConfigureRPC(limit uint64) {
 	if r == nil {
@@ -20,6 +27,9 @@ func (r *Registry) ConfigureRPC(limit uint64) {
 	r.rpc.enabled = true
 	r.rpc.limit = limit
 }
+
+// RPCAttempt increments actual attempt/retry accounting at the transport reservation boundary, not
+// at logical block start.
 func (r *Registry) RPCAttempt(retry bool) {
 	if r == nil {
 		return
@@ -31,6 +41,9 @@ func (r *Registry) RPCAttempt(retry bool) {
 		r.rpc.retries++
 	}
 }
+
+// writeRPC emits process-local attempt and budget samples; unlimited clients omit finite
+// remaining/limit gauges.
 func (r *Registry) writeRPC(b *bytes.Buffer) {
 	if !r.rpc.enabled {
 		return

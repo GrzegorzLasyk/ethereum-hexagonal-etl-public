@@ -1,3 +1,6 @@
+// validation.go defines contracts for pure value, membership and identity validation at the local
+// boundary in the application inbound boundary.
+
 package inbound
 
 import (
@@ -6,6 +9,7 @@ import (
 	"regexp"
 )
 
+// providerPattern restricts source-provider metadata to a bounded non-secret label vocabulary.
 var providerPattern = regexp.MustCompile("^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$")
 
 // ValidateEnvelope checks application invariants independently of gRPC. Semantic

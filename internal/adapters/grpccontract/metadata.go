@@ -1,3 +1,6 @@
+// metadata.go implements transport identity, version and provenance validation in the shared
+// technical support layer, outside service domains.
+
 // Package grpccontract contains shared transport validation, never service domain models.
 package grpccontract
 
@@ -11,8 +14,11 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// providerLabel restricts source-provider metadata to a bounded non-secret label vocabulary.
 var providerLabel = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$`)
 
+// ValidChainID recognizes canonical nonnegative decimal chain identifiers without converting them
+// to floating point.
 func ValidChainID(id string) bool {
 	if id == "" || (len(id) > 1 && id[0] == '0') {
 		return false
@@ -25,10 +31,14 @@ func ValidChainID(id string) bool {
 	return true
 }
 
+// EventID derives the versioned event key from chain, height and hash; retry timing and provider
+// do not affect it.
 func EventID(kind string, block *etlv1.BlockIdentity) string {
 	return fmt.Sprintf("%s/v1/%s/%d/%x", kind, block.GetChainId(), block.GetNumber(), block.GetBlockHash())
 }
 
+// ValidTimestamp rejects invalid or zero source timestamps before transport data enters the
+// application.
 func ValidTimestamp(t *timestamppb.Timestamp) bool {
 	return t != nil && t.CheckValid() == nil && !t.AsTime().IsZero()
 }
@@ -57,6 +67,7 @@ func ValidateMetadata(m *etlv1.EventMetadata, kind, expectedChain string) error 
 	return nil
 }
 
+// validHash checks the required hash width and whether the zero value is allowed at this boundary.
 func validHash(b []byte, allowZero bool) bool {
 	if len(b) != 32 {
 		return false

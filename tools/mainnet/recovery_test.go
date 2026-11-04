@@ -1,3 +1,6 @@
+// recovery_test.go exercises explicit bounded restart, replay, repair and reindex operator
+// commands in the local operator tooling.
+
 package main
 
 import (
@@ -6,6 +9,8 @@ import (
 	"testing"
 )
 
+// TestRecoveryCommandsOffline inspects bounded repair/replay/drain command construction without
+// executing live RPC.
 func TestRecoveryCommandsOffline(t *testing.T) {
 	hash := strings.Repeat("a", 64)
 	raw := "raw-block/v1/1/1000000/" + hash
@@ -56,6 +61,8 @@ func TestRecoveryCommandsOffline(t *testing.T) {
 	}
 }
 
+// TestRestartNeverAcquiresAndRefusesActiveRun requires restart to touch only retained
+// dependencies/consumers and refuse interfering with an active acquisition.
 func TestRestartNeverAcquiresAndRefusesActiveRun(t *testing.T) {
 	for _, active := range []bool{false, true} {
 		c := configuration(t)

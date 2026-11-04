@@ -1,3 +1,6 @@
+// worker_test.go exercises bounded application polling with cancellation, progress logging and
+// worker joining in the inbound adapter layer.
+
 package worker_test
 
 import (
@@ -13,10 +16,15 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/application/ports/inbound"
 )
 
+// processorFunc adapts a test callback to one worker/dispatcher application operation.
 type processorFunc func(context.Context) (inbound.ProcessResult, error)
 
+// ProcessOne delegates to the injected test callback, allowing controlled completion, blocking or
+// failure at the application port.
 func (f processorFunc) ProcessOne(ctx context.Context) (inbound.ProcessResult, error) { return f(ctx) }
 
+// await waits within the test's bounded deadline for asynchronous progress; timeout is a test
+// failure.
 func await(t *testing.T, done <-chan struct{}) {
 	t.Helper()
 	select {
@@ -26,6 +34,8 @@ func await(t *testing.T, done <-chan struct{}) {
 	}
 }
 
+// TestBoundedConcurrencyAndJoinedShutdown holds worker operations in flight to verify pool bounds
+// and that cancellation waits for worker exit.
 func TestBoundedConcurrencyAndJoinedShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -56,6 +66,8 @@ func TestBoundedConcurrencyAndJoinedShutdown(t *testing.T) {
 	}
 }
 
+// TestDeadlineIdleAndErrorPolling checks worker operation deadlines and idle/error polling prevent
+// unbounded blocking or tight failure loops.
 func TestDeadlineIdleAndErrorPolling(t *testing.T) {
 	for _, mode := range []string{"idle", "error", "deadline"} {
 		t.Run(mode, func(t *testing.T) {
@@ -92,6 +104,8 @@ func TestDeadlineIdleAndErrorPolling(t *testing.T) {
 	}
 }
 
+// TestPendingWorkDrainsWithoutPollDelay checks available work is processed again immediately while
+// idle/error cases retain their polling delay.
 func TestPendingWorkDrainsWithoutPollDelay(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

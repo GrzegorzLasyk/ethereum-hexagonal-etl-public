@@ -1,3 +1,6 @@
+// block_test.go exercises extraction identity, complete raw membership and source ownership checks
+// in the pure domain layer.
+
 package domain_test
 
 import (
@@ -10,6 +13,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
 
+// validExtraction builds a complete deterministic extraction for boundary tests; its
+// hashes/provenance are synthetic.
 func validExtraction() domain.Extraction {
 	id := domain.BlockID{ChainID: "1", Number: 10, Hash: domain.Hash{10}}
 	e := domain.Extraction{
@@ -36,6 +41,8 @@ func validExtraction() domain.Extraction {
 	return e
 }
 
+// TestChainID checks canonical decimal chain identities, including values beyond ordinary machine
+// integer range.
 func TestChainID(t *testing.T) {
 	for _, tt := range []struct {
 		value domain.ChainID
@@ -58,6 +65,8 @@ func TestChainID(t *testing.T) {
 	}
 }
 
+// TestExtractionValidation checks complete transaction/receipt/log membership and provenance
+// before an extraction is committable.
 func TestExtractionValidation(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -118,6 +127,8 @@ func TestExtractionValidation(t *testing.T) {
 	}
 }
 
+// TestGenesis checks the special zero-parent rule at height zero without weakening later block
+// identity validation.
 func TestGenesis(t *testing.T) {
 	e := validExtraction()
 	e.Header.ID.Number = 0
@@ -130,6 +141,8 @@ func TestGenesis(t *testing.T) {
 	}
 }
 
+// TestCloneOwnershipAndEventIdentity checks deep ownership of retained byte slices and that event
+// identity ignores retry/provenance changes.
 func TestCloneOwnershipAndEventIdentity(t *testing.T) {
 	original := validExtraction()
 	clone := original.Clone()
@@ -161,6 +174,8 @@ func TestCloneOwnershipAndEventIdentity(t *testing.T) {
 	}
 }
 
+// TestCheckpointPosition checks allowed bootstrap/retry/next-height positions and rejects gaps or
+// older unordered requests.
 func TestCheckpointPosition(t *testing.T) {
 	cp := func(n uint64) *domain.Checkpoint {
 		return &domain.Checkpoint{Block: domain.BlockID{ChainID: "1", Number: n, Hash: domain.Hash{1}}}
@@ -192,6 +207,8 @@ func TestCheckpointPosition(t *testing.T) {
 	}
 }
 
+// TestCheckpointContinuity checks parent identity at the durable cursor so a new child cannot
+// silently switch branches.
 func TestCheckpointContinuity(t *testing.T) {
 	previous := &domain.Checkpoint{Block: domain.BlockID{ChainID: "1", Number: 10, Hash: domain.Hash{10}}}
 	for _, tt := range []struct {

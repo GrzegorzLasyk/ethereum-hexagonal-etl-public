@@ -1,3 +1,6 @@
+// report_test.go exercises benchmark scenario validation and integrity-gated evidence output in
+// the offline test and diagnostic infrastructure.
+
 package performance
 
 import (
@@ -5,6 +8,8 @@ import (
 	"time"
 )
 
+// TestNoIncompleteThroughput requires complete integrity/timing evidence before a benchmark report
+// can expose successful throughput.
 func TestNoIncompleteThroughput(t *testing.T) {
 	r := Report{Scenario: Scenario{Blocks: 2}, Status: "failed", Integrity: map[string]bool{"handoffs": false}}
 	if r.Accept(time.Second, 2, 4) == nil || r.BlocksPerSecond != nil {
@@ -18,6 +23,9 @@ func TestNoIncompleteThroughput(t *testing.T) {
 		t.Fatal(r)
 	}
 }
+
+// TestScenarioGuards rejects missing opt-in, unsafe outputs and unsupported/unbounded benchmark
+// scenarios before resource creation.
 func TestScenarioGuards(t *testing.T) {
 	s := Scenario{Dataset: "synthetic-stage11", Workers: 1, Blocks: 10, Start: 100, Directory: "x", Binaries: "b"}
 	if s.Validate() != nil {

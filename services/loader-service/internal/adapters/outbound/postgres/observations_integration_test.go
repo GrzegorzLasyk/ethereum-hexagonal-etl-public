@@ -1,5 +1,8 @@
 //go:build postgresintegration
 
+// observations_integration_test.go exercises concurrent historical observations and parent/height
+// conflicts in the outbound adapter layer.
+
 package postgres
 
 import (
@@ -35,6 +38,8 @@ func forkEvent(t *testing.T) inbound.AcceptTransformedBlockRequest {
 	return r
 }
 
+// testObservations checks real chain-serialized fork/parent observations and preservation of
+// unknown canonicality.
 func testObservations(t *testing.T, runtime, owner *pgxpool.Pool) {
 	ctx := t.Context()
 	exec := func(q string, args ...any) {

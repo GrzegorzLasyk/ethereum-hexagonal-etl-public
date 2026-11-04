@@ -1,3 +1,6 @@
+// completion_test.go exercises bounded Mainnet target validation and no-RPC durable completion
+// inspection in the local operator tooling.
+
 package main
 
 import (
@@ -10,6 +13,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/etlverify"
 )
 
+// TestLiveE2EGuards checks the private final workflow restricts chain, block, request and duration
+// bounds before execution.
 func TestLiveE2EGuards(t *testing.T) {
 	c := configuration(t)
 	for k, v := range map[string]string{"EXTRACTOR_START_BLOCK": "1000000", "EXTRACTOR_END_BLOCK": "1000000", "EXTRACTOR_MAX_RPC_REQUESTS": "100", "EXTRACTOR_RUN_TIMEOUT": "2m", "EXTRACTOR_MAINNET_OPT_IN": "true", "EXTRACTOR_CONFIRMATION_DEPTH": "0", "EXTRACTOR_RECOVERY_DEPTH": "1", "EXTRACTOR_RPC_URL": "https://example.invalid/secret"} {
@@ -31,6 +36,9 @@ func TestLiveE2EGuards(t *testing.T) {
 		t.Fatal("read-only verifier incorrectly gated", err)
 	}
 }
+
+// TestCompletionCommandsUseOwnRolesAndNoRPC inspects operator commands for per-schema runtime
+// credentials and absence of new Ethereum acquisition.
 func TestCompletionCommandsUseOwnRolesAndNoRPC(t *testing.T) {
 	c := configuration(t)
 	c["EXTRACTOR_START_BLOCK"] = "1000000"
@@ -88,6 +96,8 @@ func TestCompletionCommandsUseOwnRolesAndNoRPC(t *testing.T) {
 	}
 }
 
+// TestE2EAcquisitionFailureIsNotRetried inspects final operator orchestration to prevent
+// automatically starting a second live acquisition after failure.
 func TestE2EAcquisitionFailureIsNotRetried(t *testing.T) {
 	c := configuration(t)
 	for k, v := range map[string]string{"EXTRACTOR_START_BLOCK": "1000000", "EXTRACTOR_END_BLOCK": "1000000", "EXTRACTOR_MAX_RPC_REQUESTS": "100", "EXTRACTOR_RUN_TIMEOUT": "2m", "EXTRACTOR_MAINNET_OPT_IN": "true", "EXTRACTOR_CONFIRMATION_DEPTH": "0", "EXTRACTOR_RECOVERY_DEPTH": "1", "EXTRACTOR_RPC_URL": "https://example.invalid/private-secret"} {

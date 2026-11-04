@@ -1,3 +1,6 @@
+// outbox.go implements leased Outbox claims and fenced delivery/retry state changes in the
+// outbound adapter layer.
+
 package postgres
 
 import (
@@ -21,14 +24,21 @@ type Outbox struct {
 	maxAttempts int
 }
 
+// Compile-time interface assertion checks adapter/interface compatibility at compile time without
+// allocating runtime state.
 var _ outbound.DeliveryQueue = (*Outbox)(nil)
 
+// NewOutbox validates delivery policy and binds an owning-schema queue to the supplied database
+// without claiming work.
 func NewOutbox(pool *pgxpool.Pool, chain string, lease time.Duration, maxAttempts int) (*Outbox, error) {
 	if pool == nil || domain.ChainID(chain).Validate() != nil || lease < time.Millisecond || lease > 24*time.Hour || maxAttempts < 1 || maxAttempts > 1000 {
 		return nil, fmt.Errorf("invalid outbox configuration")
 	}
 	return &Outbox{pool, chain, lease, maxAttempts}, nil
 }
+
+// deliveryError maps storage failures to safe delivery errors while preserving context
+// cancellation identity.
 func deliveryError(err error) error {
 	if errors.Is(err, context.Canceled) {
 		return context.Canceled
@@ -38,11 +48,16 @@ func deliveryError(err error) error {
 	}
 	return errors.New("outbox database operation failed")
 }
+
+// deliveryRollback attempts bounded rollback even after the operation context is canceled.
 func deliveryRollback(ctx context.Context, tx pgx.Tx) {
 	c, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	_ = tx.Rollback(c)
 }
+
+// deliveryCommit commits delivery state and distinguishes known rollback from an ambiguous commit
+// acknowledgement.
 func deliveryCommit(ctx context.Context, tx pgx.Tx) error {
 	if err := tx.Commit(ctx); err != nil {
 		if errors.Is(err, pgx.ErrTxCommitRollback) {
@@ -52,6 +67,9 @@ func deliveryCommit(ctx context.Context, tx pgx.Tx) error {
 	}
 	return nil
 }
+
+// begin opens a local read-committed transaction with synchronous commit; initialization failure
+// rolls it back.
 func (s *Outbox) begin(ctx context.Context) (pgx.Tx, error) {
 	tx, err := s.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
@@ -63,6 +81,9 @@ func (s *Outbox) begin(ctx context.Context) (pgx.Tx, error) {
 	}
 	return tx, nil
 }
+
+// ClaimDelivery claims due or expired Outbox work with a new attempt/lease in a short local
+// transaction; nil means no claim.
 func (s *Outbox) ClaimDelivery(ctx context.Context) (*outbound.Delivery, error) {
 	tx, err := s.begin(ctx)
 	if err != nil {
@@ -115,6 +136,9 @@ func (s *Outbox) ClaimDelivery(ctx context.Context) (*outbound.Delivery, error) 
 	}
 	return &item, nil
 }
+
+// Published marks an acknowledged event delivered only for the matching live claimant; it does not
+// delete the event.
 func (s *Outbox) Published(ctx context.Context, item outbound.Delivery) error {
 	tx, err := s.begin(ctx)
 	if err != nil {
@@ -151,6 +175,9 @@ func (s *Outbox) Published(ctx context.Context, item outbound.Delivery) error {
 	}
 	return deliveryCommit(ctx, tx)
 }
+
+// RetryDelivery records bounded retry or terminal failure under the claim fence, retaining the
+// original payload and event ID.
 func (s *Outbox) RetryDelivery(ctx context.Context, item outbound.Delivery, f outbound.DeliveryFailure) error {
 	if f.Delay < 0 || f.Delay > 24*time.Hour {
 		return fmt.Errorf("invalid delivery retry delay")

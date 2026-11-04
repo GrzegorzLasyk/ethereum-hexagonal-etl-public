@@ -1,3 +1,6 @@
+// source.go implements manifest-verified in-memory replay through the production RPC decoder in
+// the Extractor fixture/operator adapter.
+
 package fixturecapture
 
 import (
@@ -12,8 +15,12 @@ import (
 // live endpoint, head discovery or fallback. Original provenance is retained.
 type ReplaySource struct{ artifact Artifact }
 
+// Compile-time interface assertion checks adapter/interface compatibility at compile time without
+// allocating runtime state.
 var _ outbound.BlockSource = (*ReplaySource)(nil)
 
+// NewReplaySource verifies pinned local artifacts and constructs a source with an in-memory RPC
+// transport and no network fallback.
 func NewReplaySource(ctx context.Context, path string, expected Candidate) (*ReplaySource, error) {
 	a, err := readVerified(ctx, path, expected, nil)
 	if err != nil {
@@ -22,6 +29,7 @@ func NewReplaySource(ctx context.Context, path string, expected Candidate) (*Rep
 	return &ReplaySource{artifact: a}, nil
 }
 
+// ChainID returns the pinned local chain identity without network access.
 func (s *ReplaySource) ChainID(ctx context.Context) (domain.ChainID, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
@@ -29,6 +37,8 @@ func (s *ReplaySource) ChainID(ctx context.Context) (domain.ChainID, error) {
 	return domain.ChainID(s.artifact.Candidate.ChainID), nil
 }
 
+// Block replays only a verified captured height through production decoding, preserving exact raw
+// bytes and original provenance.
 func (s *ReplaySource) Block(ctx context.Context, number uint64) (domain.Extraction, error) {
 	if number != *s.artifact.Candidate.BlockNumber {
 		return domain.Extraction{}, domain.ErrUnavailable

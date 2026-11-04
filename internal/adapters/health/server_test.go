@@ -1,3 +1,6 @@
+// server_test.go exercises loopback HTTP routes and controlled local server lifecycle in the
+// shared technical support layer, outside service domains.
+
 package health
 
 import (
@@ -10,6 +13,8 @@ import (
 	"time"
 )
 
+// TestReadinessAndShutdown checks ready/live transitions and bounded shutdown without requiring
+// downstream completion.
 func TestReadinessAndShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -42,6 +47,8 @@ func TestReadinessAndShutdown(t *testing.T) {
 	check("/ready", 503)
 }
 
+// TestMetricsDoesNotChangeHealth checks adding the metrics route preserves liveness/readiness
+// responses and failure behavior.
 func TestMetricsDoesNotChangeHealth(t *testing.T) {
 	h := Handler(t.Context(), func(context.Context) error { return errors.New("offline") }, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte("etl_database_snapshot_success 0\n")) }))
 	for _, tc := range []struct {
@@ -56,6 +63,8 @@ func TestMetricsDoesNotChangeHealth(t *testing.T) {
 	}
 }
 
+// TestReadinessDeadlineAndConcurrentShutdown races an in-flight readiness dependency with
+// timeout/shutdown and requires unavailable responses.
 func TestReadinessDeadlineAndConcurrentShutdown(t *testing.T) {
 	t.Run("deadline", func(t *testing.T) {
 		h := Handler(t.Context(), func(ctx context.Context) error { <-ctx.Done(); return nil })
@@ -86,6 +95,9 @@ func TestReadinessDeadlineAndConcurrentShutdown(t *testing.T) {
 		}
 	})
 }
+
+// TestListenerRestrictionsAndClose rejects public/untrusted listener bindings and checks bounded
+// local listener shutdown.
 func TestListenerRestrictionsAndClose(t *testing.T) {
 	check := func(context.Context) error { return nil }
 	for _, address := range []string{":0", "0.0.0.0:0", "[::]:0", "localhost:0", "192.0.2.1:0", "bad", "127.0.0.1:bad"} {

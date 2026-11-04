@@ -1,3 +1,6 @@
+// client_test.go exercises bounded JSON-RPC transport, attempt accounting, pacing and response
+// validation in the outbound adapter layer.
+
 package jsonrpc
 
 import (
@@ -20,8 +23,11 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
 
+// fixtureNumber pins the deterministic local block height used by RPC fixtures.
 const fixtureNumber uint64 = 20000000
 
+// wireRequest decodes test JSON-RPC requests so method, parameter and request-ID assertions use
+// wire data.
 type wireRequest struct {
 	Version string            `json:"jsonrpc"`
 	ID      uint64            `json:"id"`
@@ -29,6 +35,8 @@ type wireRequest struct {
 	Params  []json.RawMessage `json:"params"`
 }
 
+// testConfig builds bounded RPC settings for a controlled endpoint instead of selecting a real
+// provider.
 func testConfig(endpoint string) Config {
 	return Config{
 		URL: endpoint, ChainID: "1", Provider: "fixture",
@@ -38,6 +46,7 @@ func testConfig(endpoint string) Config {
 	}
 }
 
+// newClient constructs a validated RPC client for the test and fails immediately on invalid setup.
 func newClient(t *testing.T, config Config) *Client {
 	t.Helper()
 	c, err := New(config, nil)
@@ -47,6 +56,7 @@ func newClient(t *testing.T, config Config) *Client {
 	return c
 }
 
+// fixture loads committed deterministic source JSON used for offline decoder and transport tests.
 func fixture(t *testing.T, name string) []byte {
 	t.Helper()
 	b, err := os.ReadFile("testdata/" + name + ".json")
@@ -56,11 +66,14 @@ func fixture(t *testing.T, name string) []byte {
 	return bytes.TrimSpace(b)
 }
 
+// reply writes a controlled JSON-RPC response with the requested ID and unchanged result bytes.
 func reply(w http.ResponseWriter, id uint64, raw []byte) {
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprintf(w, `{"jsonrpc":"2.0","id":%d,"result":%s}`, id, raw)
 }
 
+// fixtureServer serves deterministic block/receipt responses and synchronizes its request history
+// for assertions.
 type fixtureServer struct {
 	server   *httptest.Server
 	block    []byte
@@ -69,6 +82,8 @@ type fixtureServer struct {
 	requests []wireRequest
 }
 
+// serveFixtures starts a local RPC test server with controlled block/receipt responses and test-
+// owned cleanup.
 func serveFixtures(t *testing.T, block []byte, receipts [2][]byte) *fixtureServer {
 	t.Helper()
 	f := &fixtureServer{block: block, receipts: receipts}
@@ -114,6 +129,8 @@ func serveFixtures(t *testing.T, block []byte, receipts [2][]byte) *fixtureServe
 	return f
 }
 
+// TestBlockPreservesSourceAndBuildsMetadata compares retained raw result bytes and decoded
+// block/receipt membership after controlled RPC acquisition.
 func TestBlockPreservesSourceAndBuildsMetadata(t *testing.T) {
 	block := fixture(t, "block")
 	receipts := [2][]byte{fixture(t, "receipt_0"), fixture(t, "receipt_1")}
@@ -168,6 +185,8 @@ func TestBlockPreservesSourceAndBuildsMetadata(t *testing.T) {
 	}
 }
 
+// mutate rebuilds only a test JSON fixture after applying a mutation, to exercise invalid-input
+// rejection.
 func mutate(t *testing.T, raw []byte, fn func(map[string]any)) []byte {
 	t.Helper()
 	var o map[string]any
@@ -182,9 +201,16 @@ func mutate(t *testing.T, raw []byte, fn func(map[string]any)) []byte {
 	return result
 }
 
-func firstTx(o map[string]any) map[string]any  { return o["transactions"].([]any)[0].(map[string]any) }
+// firstTx selects the first object in a known test fixture for deliberate mutation, not production
+// decoding.
+func firstTx(o map[string]any) map[string]any { return o["transactions"].([]any)[0].(map[string]any) }
+
+// firstLog selects the first object in a known test fixture for deliberate mutation, not
+// production decoding.
 func firstLog(o map[string]any) map[string]any { return o["logs"].([]any)[0].(map[string]any) }
 
+// TestBlockRejectsPartialOrConflictingData mutates source fields to ensure incomplete or mixed-
+// identity snapshots never return successful extraction.
 func TestBlockRejectsPartialOrConflictingData(t *testing.T) {
 	tests := []struct {
 		name, resource string
@@ -248,6 +274,8 @@ func TestBlockRejectsPartialOrConflictingData(t *testing.T) {
 	}
 }
 
+// TestEmptyBlockAndHistoricalReceipt checks explicit empty collections and historical receipt
+// representation without inventing modern fields.
 func TestEmptyBlockAndHistoricalReceipt(t *testing.T) {
 	for _, historical := range []bool{false, true} {
 		t.Run(fmt.Sprint(historical), func(t *testing.T) {
@@ -288,6 +316,8 @@ func TestEmptyBlockAndHistoricalReceipt(t *testing.T) {
 	}
 }
 
+// TestTypedTransactionVariants checks the type-dependent fee, access, blob and authorization
+// representations against deterministic source cases.
 func TestTypedTransactionVariants(t *testing.T) {
 	for _, kind := range []string{"0x1", "0x3", "0x4"} {
 		t.Run(kind, func(t *testing.T) {
@@ -314,6 +344,8 @@ func TestTypedTransactionVariants(t *testing.T) {
 	}
 }
 
+// TestHTTPRetriesAndCredentialRedaction checks HTTP failure classification and finite retry
+// behavior without exposing endpoint credentials.
 func TestHTTPRetriesAndCredentialRedaction(t *testing.T) {
 	for _, tt := range []struct{ status, attempts int }{
 		{429, 3}, {408, 3}, {500, 3}, {502, 3}, {503, 3}, {504, 3},
@@ -340,6 +372,8 @@ func TestHTTPRetriesAndCredentialRedaction(t *testing.T) {
 	}
 }
 
+// TestRPCErrorsAndMalformedResponses checks provider error codes and malformed RPC results never
+// become empty successful snapshots.
 func TestRPCErrorsAndMalformedResponses(t *testing.T) {
 	for _, tt := range []struct {
 		name, body     string
@@ -385,6 +419,8 @@ func TestRPCErrorsAndMalformedResponses(t *testing.T) {
 	}
 }
 
+// TestRetryRecoveryAndRetryAfter checks transient source failure can recover within bounds while
+// respecting server-directed pacing.
 func TestRetryRecoveryAndRetryAfter(t *testing.T) {
 	for _, tt := range []struct {
 		name, after string
@@ -421,6 +457,8 @@ func TestRetryRecoveryAndRetryAfter(t *testing.T) {
 	}
 }
 
+// TestTimeoutAndCancellation bounds response/operation lifetime and requires cancellation to stop
+// further acquisition work.
 func TestTimeoutAndCancellation(t *testing.T) {
 	t.Run("request timeout", func(t *testing.T) {
 		var calls atomic.Int32
@@ -478,6 +516,8 @@ func TestTimeoutAndCancellation(t *testing.T) {
 	})
 }
 
+// TestResponseAndSnapshotBounds checks per-response and aggregate retained-byte limits reject
+// complete acquisition rather than truncating source data.
 func TestResponseAndSnapshotBounds(t *testing.T) {
 	t.Run("body limit", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, strings.Repeat("x", 1001)) }))
@@ -508,6 +548,8 @@ func TestResponseAndSnapshotBounds(t *testing.T) {
 	})
 }
 
+// TestChainMismatchAndRedirects rejects the wrong provider chain and prevents redirects from
+// forwarding a credential-bearing endpoint.
 func TestChainMismatchAndRedirects(t *testing.T) {
 	t.Run("wrong chain", func(t *testing.T) {
 		var count atomic.Int32
@@ -536,6 +578,8 @@ func TestChainMismatchAndRedirects(t *testing.T) {
 	})
 }
 
+// TestInvalidConfiguration checks invalid configuration fails before opening a usable
+// acquisition/receiver boundary.
 func TestInvalidConfiguration(t *testing.T) {
 	for _, tt := range []struct {
 		name   string

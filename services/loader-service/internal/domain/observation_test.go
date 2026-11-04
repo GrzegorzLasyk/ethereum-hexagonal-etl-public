@@ -1,3 +1,6 @@
+// observation_test.go exercises pure competing-height and parent-link observations in the pure
+// domain layer.
+
 package domain
 
 import (
@@ -6,6 +9,8 @@ import (
 	"testing"
 )
 
+// TestObserveArrival checks local conflict/parent observations for competing and out-of-order
+// arrivals while canonicality stays unknown.
 func TestObserveArrival(t *testing.T) {
 	parent := BlockReference{ChainID: "1", Number: 10, Hash: Hash{10}}
 	other := BlockReference{ChainID: "1", Number: 10, Hash: Hash{99}}
@@ -37,6 +42,8 @@ func TestObserveArrival(t *testing.T) {
 	}
 }
 
+// TestObservationBoundaries checks neighboring-height calculation at genesis and uint64 maximum
+// without wraparound.
 func TestObservationBoundaries(t *testing.T) {
 	for _, tc := range []struct{ number, low, high uint64 }{{0, 0, 1}, {1, 0, 2}, {math.MaxUint64, math.MaxUint64 - 1, math.MaxUint64}} {
 		low, high := ObservationRange(tc.number)

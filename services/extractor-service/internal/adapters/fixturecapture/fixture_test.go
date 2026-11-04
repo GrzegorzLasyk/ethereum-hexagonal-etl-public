@@ -1,3 +1,6 @@
+// fixture_test.go exercises offline artifact integrity, secret checks and exclusive capture
+// publication in the Extractor fixture/operator adapter.
+
 package fixturecapture
 
 import (
@@ -44,10 +47,14 @@ func synthetic(t *testing.T) (Candidate, domain.Extraction) {
 	return c, e
 }
 
+// settings builds private-looking but synthetic test configuration; it never reads a user's RPC
+// credentials.
 func settings() map[string]string {
 	return map[string]string{"ETHEREUM_CAPTURE_OPT_IN": "true", "ETHEREUM_RPC_URL": "https://mainnet.infura.io/v3/private-secret", "ETHEREUM_CAPTURE_MAX_REQUESTS": "100", "ETHEREUM_CAPTURE_TIMEOUT": "2m"}
 }
 
+// TestSettingsOffline checks capture endpoint/opt-in/range/budget settings without any live
+// acquisition.
 func TestSettingsOffline(t *testing.T) {
 	c, _ := synthetic(t)
 	for _, tc := range []struct{ k, v string }{
@@ -84,12 +91,18 @@ func TestSettingsOffline(t *testing.T) {
 	}
 }
 
+// fakeSource provides controlled complete source observations and failures at the block-source
+// port.
 type fakeSource struct {
 	e        domain.Extraction
 	attempts uint64
 }
 
+// Requests reports the fake source attempt count for bounded capture assertions.
 func (s *fakeSource) Requests() uint64 { return s.attempts }
+
+// Block returns or fails a controlled complete source snapshot so acquisition/persistence
+// boundaries can be exercised.
 func (s *fakeSource) Block(ctx context.Context, n uint64) (domain.Extraction, error) {
 	s.attempts = 5
 	if n != s.e.Header.ID.Number {
@@ -98,6 +111,8 @@ func (s *fakeSource) Block(ctx context.Context, n uint64) (domain.Extraction, er
 	return s.e, ctx.Err()
 }
 
+// loadArtifact loads a test artifact and fails the test on malformed evidence rather than
+// returning a partial value.
 func loadArtifact(t *testing.T, path string) Artifact {
 	t.Helper()
 	b, err := os.ReadFile(path)
@@ -111,6 +126,8 @@ func loadArtifact(t *testing.T, path string) Artifact {
 	return a
 }
 
+// TestCaptureAndOfflineIntegrity round-trips an exclusively written artifact and rejects changes
+// to raw identity/digests or recorded coverage.
 func TestCaptureAndOfflineIntegrity(t *testing.T) {
 	c, e := synthetic(t)
 	path := filepath.Join(t.TempDir(), "artifact.json")
@@ -169,6 +186,8 @@ func TestCaptureAndOfflineIntegrity(t *testing.T) {
 	}
 }
 
+// TestSecretsAndCancellationDoNotPublish requires failed/canceled capture or secret-bearing data
+// to leave no newly published artifact.
 func TestSecretsAndCancellationDoNotPublish(t *testing.T) {
 	c, e := synthetic(t)
 	for _, secret := range []bool{false, true} {
@@ -192,6 +211,8 @@ func TestSecretsAndCancellationDoNotPublish(t *testing.T) {
 	}
 }
 
+// TestEscapedCredentialEcho rejects secret material echoed through escaped JSON so artifact
+// redaction cannot be bypassed by encoding.
 func TestEscapedCredentialEcho(t *testing.T) {
 	c, e := synthetic(t)
 	e.RawBlock = append([]byte(`{"extension":"private\u002dsecret",`), e.RawBlock[1:]...)
@@ -204,6 +225,8 @@ func TestEscapedCredentialEcho(t *testing.T) {
 	}
 }
 
+// TestBoundedAdapterCaptureOffline exercises capture through the production RPC adapter with local
+// responses and finite request/time limits.
 func TestBoundedAdapterCaptureOffline(t *testing.T) {
 	c, e := synthetic(t)
 	for _, timeout := range []bool{false, true} {
@@ -277,6 +300,8 @@ func TestBoundedAdapterCaptureOffline(t *testing.T) {
 	}
 }
 
+// TestVersionedSelectionManifest checks the committed candidate inventory and explicit pending
+// coverage without substituting invented source data.
 func TestVersionedSelectionManifest(t *testing.T) {
 	m, err := LoadManifest("../../../../../test/fixtures/mainnet/v1/manifest.json")
 	if err != nil {

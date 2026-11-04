@@ -1,3 +1,6 @@
+// config.go implements validated environment configuration and conservative startup limits in the
+// Extractor fixture/operator adapter.
+
 package fixturecapture
 
 import (
@@ -11,8 +14,12 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/adapters/outbound/jsonrpc"
 )
 
+// ErrConfig signals capture requires explicit opt-in outside CI, a private Mainnet endpoint and
+// valid bounds. Callers can match this category with errors.Is without parsing error text.
 var ErrConfig = errors.New("capture requires explicit opt-in outside CI, a private Mainnet endpoint and valid bounds")
 
+// endpointPath requires the expected credential-bearing Mainnet endpoint path without exposing its
+// value.
 var endpointPath = regexp.MustCompile(`^/v3/[A-Za-z0-9_-]+$`)
 
 // Settings never includes the endpoint in errors or persisted metadata.

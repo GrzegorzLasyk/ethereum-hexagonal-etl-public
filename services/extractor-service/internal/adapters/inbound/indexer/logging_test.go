@@ -1,3 +1,6 @@
+// logging_test.go exercises event correlation and secret/error redaction on success and failure in
+// the inbound adapter layer.
+
 package indexer
 
 import (
@@ -15,6 +18,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
 
+// TestIndexLogsCommittedAndFailedBlocksAtShutdown checks cancellation does not erase committed or
+// failed block correlation from progress logs.
 func TestIndexLogsCommittedAndFailedBlocksAtShutdown(t *testing.T) {
 	first := domain.BlockID{ChainID: "1", Number: 10, Hash: domain.Hash{1}}
 	second := domain.BlockID{ChainID: "1", Number: 11, Hash: domain.Hash{2}}
@@ -50,6 +55,9 @@ func TestIndexLogsCommittedAndFailedBlocksAtShutdown(t *testing.T) {
 		}
 	}
 }
+
+// TestRecoveryLogsOldTipAndAncestorWithoutClaimingSuccess checks recovery progress retains both
+// identities and does not report an uncommitted rewind as success.
 func TestRecoveryLogsOldTipAndAncestorWithoutClaimingSuccess(t *testing.T) {
 	tip := domain.BlockID{ChainID: "1", Number: 13, Hash: domain.Hash{3}}
 	ancestor := domain.BlockID{ChainID: "1", Number: 11, Hash: domain.Hash{1}}

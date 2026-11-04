@@ -1,3 +1,6 @@
+// receiver.go implements gRPC-to-application request mapping and ACK-after-persistence semantics
+// in the inbound adapter layer.
+
 // Package grpc implements the service's inbound transport boundary.
 package grpc
 
@@ -18,6 +21,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// Receiver adapts the generated gRPC server contract to an injected durable acceptance port and
+// validated limits.
 type Receiver struct {
 	logger *slog.Logger
 	etlv1.UnimplementedTransformerServiceServer
@@ -26,6 +31,8 @@ type Receiver struct {
 	limits   grpccontract.Limits
 }
 
+// Compile-time interface assertion checks adapter/interface compatibility at compile time without
+// allocating runtime state.
 var _ etlv1.TransformerServiceServer = (*Receiver)(nil)
 
 // NewReceiver requires an explicit chain and validated transport budgets.
@@ -54,6 +61,8 @@ func NewServer(chainID string, limits grpccontract.Limits, acceptor inbound.RawB
 	return NewServerWithAdmission(chainID, limits, acceptor, gate, loggers...)
 }
 
+// NewServerWithAdmission constructs the gRPC server with validated resource reservations before
+// decoding; binding remains the caller's responsibility.
 func NewServerWithAdmission(chainID string, limits grpccontract.Limits, acceptor inbound.RawBlockAcceptor, gate *grpccontract.Admission, loggers ...*slog.Logger) (*grpcgo.Server, error) {
 	if gate == nil {
 		return nil, fmt.Errorf("admission gate required")
@@ -72,6 +81,8 @@ func NewServerWithAdmission(chainID string, limits grpccontract.Limits, acceptor
 	return server, nil
 }
 
+// SubmitRawBlock validates the raw transport envelope and delegates durable acceptance; only
+// explicit committed/already-accepted outcomes receive ACK.
 func (r *Receiver) SubmitRawBlock(ctx context.Context, req *etlv1.SubmitRawBlockRequest) (response *etlv1.SubmitRawBlockResponse, returnedErr error) {
 	started := time.Now()
 	event := logevent.Event{Service: "transformer-service", Operation: "accept_inbox", Outcome: "accepted"}
@@ -154,6 +165,8 @@ func (r *Receiver) SubmitRawBlock(ctx context.Context, req *etlv1.SubmitRawBlock
 	return &etlv1.SubmitRawBlockResponse{Acceptance: &etlv1.DurableAcceptance{EventId: result.EventID, Status: outcome}}, nil
 }
 
+// acceptanceError maps application acceptance failures to safe gRPC status codes without including
+// payload or database details.
 func acceptanceError(err error) error {
 	switch {
 	case errors.Is(err, context.Canceled):
@@ -177,6 +190,8 @@ func acceptanceError(err error) error {
 	}
 }
 
+// transportErrorCode maps transport failures to fixed log labels rather than exposing arbitrary
+// error strings.
 func transportErrorCode(err error) string {
 	if grpccontract.IsOverloaded(err) {
 		return "overloaded"

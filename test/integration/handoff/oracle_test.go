@@ -1,3 +1,6 @@
+// oracle_test.go exercises independent normalized-field comparisons against source JSON in the
+// offline test and diagnostic infrastructure.
+
 package handoff_test
 
 import (
@@ -18,6 +21,8 @@ type rpcField struct {
 	optional          bool
 }
 
+// fields expands an oracle field specification into independent required/optional comparison
+// rules.
 func fields(spec string, optional bool) []rpcField {
 	var out []rpcField
 	for _, item := range strings.Fields(spec) {
@@ -26,6 +31,8 @@ func fields(spec string, optional bool) []rpcField {
 	}
 	return out
 }
+
+// recordFields selects the independent source-to-SQL mapping for the normalized table under test.
 func recordFields(table string) []rpcField {
 	required, optional := "", ""
 	switch table {
@@ -44,6 +51,9 @@ func recordFields(table string) []rpcField {
 	}
 	return append(fields(required, false), fields(optional, true)...)
 }
+
+// decodeObject decodes source JSON for the independent comparison oracle without using production
+// normalization.
 func decodeObject(data []byte) (map[string]any, error) {
 	var obj map[string]any
 	d := json.NewDecoder(bytes.NewReader(data))
@@ -51,6 +61,9 @@ func decodeObject(data []byte) (map[string]any, error) {
 	err := d.Decode(&obj)
 	return obj, err
 }
+
+// sqlValue converts one oracle value to its expected SQL representation, preserving exact numbers
+// and null semantics.
 func sqlValue(value any, kind string) (any, error) {
 	if value == nil {
 		return nil, nil
@@ -123,6 +136,9 @@ func sqlValue(value any, kind string) (any, error) {
 	}
 	return nil, fmt.Errorf("unknown conversion")
 }
+
+// compareRecord checks every modeled normalized field against the independent source-derived
+// expectation.
 func compareRecord(table string, source, stored map[string]any) error {
 	if stored["chain_id"] != "1" {
 		return fmt.Errorf("%s chain identity", table)
@@ -171,6 +187,9 @@ func compareRecord(table string, source, stored map[string]any) error {
 	}
 	return nil
 }
+
+// TestOfflineOracle checks independent source-to-record comparison detects changed normalized
+// fields rather than mirroring persistence code.
 func TestOfflineOracle(t *testing.T) {
 	v, err := sqlValue("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff", "q")
 	if err != nil || v != json.Number("115792089237316195423570985008687907853269984665640564039457584007913129639935") {

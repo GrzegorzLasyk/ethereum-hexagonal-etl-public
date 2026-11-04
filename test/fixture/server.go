@@ -1,3 +1,6 @@
+// server.go implements loopback HTTP routes and controlled local server lifecycle in the offline
+// test and diagnostic infrastructure.
+
 package fixture
 
 import (
@@ -8,6 +11,7 @@ import (
 	"sync"
 )
 
+// State captures deterministic fixture head/branch and accepted-ACK fault counters.
 type State struct {
 	Head                  uint64 `json:"head"`
 	Fork                  bool   `json:"fork"`
@@ -17,6 +21,9 @@ type State struct {
 	TransformedDuplicates int    `json:"transformed_duplicates"`
 	Changed               bool   `json:"changed_event"`
 }
+
+// Server owns synchronized synthetic chain and fault state; it is local test infrastructure, not
+// an Ethereum provider.
 type Server struct {
 	mu                       sync.Mutex
 	state                    State
@@ -24,10 +31,16 @@ type Server struct {
 	seen                     map[string][32]byte
 }
 
+// New creates a deterministic local chain/control state without contacting Ethereum.
 func New(head uint64) *Server {
 	return &Server{state: State{Head: head}, seen: make(map[string][32]byte)}
 }
+
+// Snapshot copies fixture control state under its lock so callers cannot mutate the live server
+// state.
 func (s *Server) Snapshot() State { s.mu.Lock(); defer s.mu.Unlock(); return s.state }
+
+// Handler registers the local fixture RPC/control handlers without starting an HTTP listener.
 func (s *Server) Handler() http.Handler {
 	m := http.NewServeMux()
 	m.HandleFunc("GET /ready", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
@@ -36,6 +49,9 @@ func (s *Server) Handler() http.Handler {
 	m.HandleFunc("POST /", s.rpc)
 	return m
 }
+
+// control validates local fault/head/branch controls before mutating fixture state; invalid
+// requests do not silently change the chain.
 func (s *Server) control(w http.ResponseWriter, r *http.Request) {
 	var c struct {
 		Head            *uint64 `json:"head"`
@@ -65,6 +81,9 @@ func (s *Server) control(w http.ResponseWriter, r *http.Request) {
 	s.mu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
 }
+
+// rpc serves the supported synthetic Ethereum methods and configured failures, without contacting
+// a real provider.
 func (s *Server) rpc(w http.ResponseWriter, r *http.Request) {
 	var q struct {
 		Version string            `json:"jsonrpc"`

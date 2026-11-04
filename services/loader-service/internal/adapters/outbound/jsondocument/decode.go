@@ -1,3 +1,6 @@
+// decode.go implements strict source/document decoding into service-owned domain values in the
+// outbound adapter layer.
+
 // Package jsondocument decodes the existing transformed JSON v1 contract.
 package jsondocument
 
@@ -9,8 +12,11 @@ import (
 	"time"
 )
 
+// Decoder implements the application decoding port using adapter-owned JSON representation rules.
 type Decoder struct{}
 
+// Decode checks the normalized JSON version and field shapes, then builds Loader-owned values.
+// The application separately validates snapshot invariants and envelope/provenance binding.
 func (Decoder) Decode(ctx context.Context, payload []byte) (domain.Document, error) {
 	var doc domain.Document
 	if len(payload) == 0 || len(payload) > 64<<20 {
@@ -100,6 +106,8 @@ func (Decoder) Decode(ctx context.Context, payload []byte) (domain.Document, err
 	return doc, nil
 }
 
+// textValue reads a required normalized string field; malformed JSON values cannot become empty
+// defaults.
 func textValue(raw json.RawMessage) (string, error) {
 	var s string
 	if json.Unmarshal(raw, &s) != nil || s == "" {
@@ -107,6 +115,8 @@ func textValue(raw json.RawMessage) (string, error) {
 	}
 	return s, nil
 }
+
+// timestamp parses the normalized source timestamp and rejects invalid provenance.
 func timestamp(raw json.RawMessage) (time.Time, error) {
 	s, err := textValue(raw)
 	if err != nil {
@@ -119,6 +129,8 @@ func timestamp(raw json.RawMessage) (time.Time, error) {
 	return t, nil
 }
 
+// blockFrom maps a decoded block object into service-owned fields while preserving optional fork-
+// era values.
 func blockFrom(o object) (domain.Block, error) {
 	r := reader{o: o}
 	v := domain.Block{
@@ -151,6 +163,8 @@ func blockFrom(o object) (domain.Block, error) {
 	return v, r.err
 }
 
+// transactionFrom maps a transaction object into exact quantities, fixed identities and type-
+// dependent optional fields.
 func transactionFrom(o object) (domain.Transaction, error) {
 	r := reader{o: o}
 	v := domain.Transaction{
@@ -181,6 +195,8 @@ func transactionFrom(o object) (domain.Transaction, error) {
 	return v, r.err
 }
 
+// receiptFrom maps execution outcome, gas and ordered logs while preserving historical root/status
+// distinctions.
 func receiptFrom(o object) (domain.Receipt, error) {
 	r := reader{o: o}
 	v := domain.Receipt{
@@ -204,6 +220,8 @@ func receiptFrom(o object) (domain.Receipt, error) {
 	return v, r.err
 }
 
+// logFrom maps block/transaction positions, topics and data for subsequent domain membership
+// validation.
 func logFrom(o object) (domain.Log, error) {
 	r := reader{o: o}
 	v := domain.Log{
@@ -221,6 +239,7 @@ func logFrom(o object) (domain.Log, error) {
 	return v, r.err
 }
 
+// accessFrom decodes one access-list address and storage-key set without changing their order.
 func accessFrom(o object) (domain.Access, error) {
 	r := reader{o: o}
 	v := domain.Access{
@@ -230,6 +249,8 @@ func accessFrom(o object) (domain.Access, error) {
 	return v, r.err
 }
 
+// authorizationFrom decodes an authorization tuple with exact integer/signature values and
+// required widths.
 func authorizationFrom(o object) (domain.Authorization, error) {
 	r := reader{o: o}
 	v := domain.Authorization{
@@ -243,6 +264,7 @@ func authorizationFrom(o object) (domain.Authorization, error) {
 	return v, r.err
 }
 
+// accesses decodes the ordered access-list collection and rejects malformed elements.
 func accesses(raw json.RawMessage) ([]domain.Access, error) {
 	items, err := array(raw)
 	if err != nil {
@@ -263,6 +285,7 @@ func accesses(raw json.RawMessage) ([]domain.Access, error) {
 	return result, nil
 }
 
+// authorizations decodes the ordered authorization collection and rejects malformed elements.
 func authorizations(raw json.RawMessage) ([]domain.Authorization, error) {
 	items, err := array(raw)
 	if err != nil {

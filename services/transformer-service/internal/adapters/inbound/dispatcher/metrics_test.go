@@ -1,3 +1,6 @@
+// metrics_test.go exercises low-cardinality operation/queue exposition with snapshot
+// failure/freshness semantics in the inbound adapter layer.
+
 package dispatcher_test
 
 import (
@@ -13,6 +16,8 @@ import (
 	"time"
 )
 
+// TestMetricsIndependentOfLogLevelAndShutdown checks worker observations remain available
+// regardless of filtered logs or cancellation.
 func TestMetricsIndependentOfLogLevelAndShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

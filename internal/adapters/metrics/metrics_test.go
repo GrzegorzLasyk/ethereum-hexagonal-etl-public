@@ -1,3 +1,6 @@
+// metrics_test.go exercises low-cardinality operation/queue exposition with snapshot
+// failure/freshness semantics in the shared technical support layer, outside service domains.
+
 package metrics
 
 import (
@@ -11,11 +14,16 @@ import (
 	"time"
 )
 
+// scrape serves the metrics handler through a controlled HTTP recorder and returns its exposition
+// for assertions.
 func scrape(h http.Handler) string {
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest("GET", "/metrics", nil))
 	return w.Body.String()
 }
+
+// TestSnapshotFailureFreshnessAndRecovery checks database observation failure remains explicit and
+// later successful snapshots restore valid queue data.
 func TestSnapshotFailureFreshnessAndRecovery(t *testing.T) {
 	r := New("process_inbox")
 	r.Observe("process_inbox", "retry", time.Second)
@@ -52,6 +60,9 @@ func TestSnapshotFailureFreshnessAndRecovery(t *testing.T) {
 		t.Fatal("did not recover")
 	}
 }
+
+// TestBoundedLabelsHistogramsConcurrencyAndRestart checks concurrent metric updates, fixed label
+// vocabulary and process-local counter reset semantics.
 func TestBoundedLabelsHistogramsConcurrencyAndRestart(t *testing.T) {
 	r := New("persist_block", "secret-event-id")
 	var wg sync.WaitGroup
@@ -83,6 +94,9 @@ func TestBoundedLabelsHistogramsConcurrencyAndRestart(t *testing.T) {
 		t.Fatal("counter restart")
 	}
 }
+
+// TestScrapeDeadlineAndConcurrencyBound checks DB-backed metric collection is time/concurrency
+// bounded and cannot become unbounded work under scrape load.
 func TestScrapeDeadlineAndConcurrencyBound(t *testing.T) {
 	r := New()
 	entered := make(chan struct{})

@@ -1,3 +1,8 @@
+// block.go implements extraction identity, complete raw membership and source ownership checks in
+// the pure domain layer.
+
+// Package domain provides extraction identity, complete raw membership and source ownership checks
+// in the pure domain layer.
 package domain
 
 import (
@@ -9,18 +14,34 @@ import (
 )
 
 var (
-	ErrInvalidData        = errors.New("invalid extraction data")
-	ErrChainMismatch      = errors.New("chain mismatch")
-	ErrUnavailable        = errors.New("source data unavailable")
-	ErrIncomplete         = errors.New("incomplete block")
-	ErrBlockConflict      = errors.New("block identity or parent conflict")
+	// ErrInvalidData signals invalid extraction data. Callers can match this category with errors.Is
+	// without parsing error text.
+	ErrInvalidData = errors.New("invalid extraction data")
+	// ErrChainMismatch signals chain mismatch. Callers can match this category with errors.Is without
+	// parsing error text.
+	ErrChainMismatch = errors.New("chain mismatch")
+	// ErrUnavailable signals source data unavailable. Callers can match this category with errors.Is
+	// without parsing error text.
+	ErrUnavailable = errors.New("source data unavailable")
+	// ErrIncomplete signals incomplete block. Callers can match this category with errors.Is without
+	// parsing error text.
+	ErrIncomplete = errors.New("incomplete block")
+	// ErrBlockConflict signals block identity or parent conflict. Callers can match this category with
+	// errors.Is without parsing error text.
+	ErrBlockConflict = errors.New("block identity or parent conflict")
+	// ErrCheckpointConflict signals checkpoint conflict. Callers can match this category with
+	// errors.Is without parsing error text.
 	ErrCheckpointConflict = errors.New("checkpoint conflict")
-	ErrOutOfSequence      = errors.New("block is outside the extraction sequence")
+	// ErrOutOfSequence signals block is outside the extraction sequence. Callers can match this
+	// category with errors.Is without parsing error text.
+	ErrOutOfSequence = errors.New("block is outside the extraction sequence")
 )
 
 // ChainID is a canonical nonnegative decimal integer, not an RPC hex quantity.
 type ChainID string
 
+// Validate requires a canonical nonnegative decimal chain identifier without imposing a uint64
+// chain limit.
 func (id ChainID) Validate() error {
 	if len(id) == 0 || (len(id) > 1 && id[0] == '0') {
 		return fmt.Errorf("%w: noncanonical chain ID", ErrInvalidData)
@@ -33,15 +54,22 @@ func (id ChainID) Validate() error {
 	return nil
 }
 
+// Hash is a fixed 32-byte Ethereum identity; a height alone is not sufficient to distinguish
+// forks.
 type Hash [32]byte
+
+// Address is a fixed 20-byte Ethereum address; optional recipients represent null separately.
 type Address [20]byte
 
+// BlockID combines chain, height and hash so historical competing observations keep distinct
+// identities.
 type BlockID struct {
 	ChainID ChainID
 	Number  uint64
 	Hash    Hash
 }
 
+// Validate checks chain and nonzero block hash so height alone cannot represent an observation.
 func (id BlockID) Validate() error {
 	if err := id.ChainID.Validate(); err != nil {
 		return err
@@ -57,6 +85,7 @@ func (id BlockID) EventID() string {
 	return fmt.Sprintf("raw-block/v1/%s/%d/%x", id.ChainID, id.Number, id.Hash)
 }
 
+// Header contains the mined block identity and parent link needed for continuity/recovery checks.
 type Header struct {
 	ID         BlockID
 	ParentHash Hash
@@ -78,6 +107,7 @@ type Receipt struct {
 	Logs             []Log
 }
 
+// Log models a receipt log with block/transaction position, ordered topics and data.
 type Log struct {
 	Block            BlockID
 	TransactionHash  Hash
@@ -101,6 +131,8 @@ type Extraction struct {
 	ExtractedAt  time.Time
 }
 
+// Validate checks complete raw/typed membership, deterministic indexes and provenance before
+// persistence can accept a snapshot.
 func (e Extraction) Validate() error {
 	if err := e.Header.ID.Validate(); err != nil {
 		return err
@@ -157,6 +189,8 @@ func (e Extraction) Validate() error {
 	return nil
 }
 
+// sameBlock distinguishes chain mismatch from another full block identity before accepting
+// transaction/receipt membership.
 func sameBlock(expected, actual BlockID) error {
 	if expected.ChainID != actual.ChainID {
 		return ErrChainMismatch

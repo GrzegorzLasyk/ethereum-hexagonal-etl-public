@@ -1,3 +1,8 @@
+// accept_block.go defines contracts for plain event envelopes and explicit durable acceptance
+// contracts in the application inbound boundary.
+
+// Package inbound defines plain application entry contracts and progress/acceptance outcomes,
+// independent of transport DTOs.
 package inbound
 
 import (
@@ -7,12 +12,24 @@ import (
 )
 
 var (
-	ErrInvalidEvent       = errors.New("invalid event")
+	// ErrInvalidEvent signals invalid event. Callers can match this category with errors.Is without
+	// parsing error text.
+	ErrInvalidEvent = errors.New("invalid event")
+	// ErrUnsupportedVersion signals unsupported event version. Callers can match this category with
+	// errors.Is without parsing error text.
 	ErrUnsupportedVersion = errors.New("unsupported event version")
-	ErrConflict           = errors.New("event identity conflict")
-	ErrOverloaded         = errors.New("durable admission capacity exhausted")
-	ErrUnavailable        = errors.New("inbox unavailable")
-	ErrNotImplemented     = errors.New("durable inbox acceptance is not implemented")
+	// ErrConflict signals event identity conflict. Callers can match this category with errors.Is
+	// without parsing error text.
+	ErrConflict = errors.New("event identity conflict")
+	// ErrOverloaded signals durable admission capacity exhausted. Callers can match this category with
+	// errors.Is without parsing error text.
+	ErrOverloaded = errors.New("durable admission capacity exhausted")
+	// ErrUnavailable signals inbox unavailable. Callers can match this category with errors.Is without
+	// parsing error text.
+	ErrUnavailable = errors.New("inbox unavailable")
+	// ErrNotImplemented signals durable inbox acceptance is not implemented. Callers can match this
+	// category with errors.Is without parsing error text.
+	ErrNotImplemented = errors.New("durable inbox acceptance is not implemented")
 )
 
 // BlockIdentity is service-owned application input, not a transport DTO.
@@ -23,6 +40,8 @@ type BlockIdentity struct {
 	ParentHash [32]byte
 }
 
+// AcceptTransformedBlockRequest carries plain identity/provenance and normalized JSON into the
+// durable acceptance boundary.
 type AcceptTransformedBlockRequest struct {
 	EventID        string
 	EventVersion   uint32
@@ -35,14 +54,23 @@ type AcceptTransformedBlockRequest struct {
 	TransformedAt  time.Time
 }
 
+// Acceptance encodes whether acceptance is unspecified, newly durable or an identical already-
+// durable event.
 type Acceptance uint8
 
 const (
+	// AcceptanceUnspecified is the zero result and must never be interpreted as a durable ACK.
 	AcceptanceUnspecified Acceptance = iota
+	// DurablyAccepted means new input committed to the receiver Inbox; asynchronous processing may
+	// still be pending.
 	DurablyAccepted
+	// AlreadyAccepted means the same event/content was already durable; no new processing item is
+	// created.
 	AlreadyAccepted
 )
 
+// AcceptanceResult returns durable acceptance kind and event ID; callers must not infer success
+// from a zero value.
 type AcceptanceResult struct {
 	EventID    string
 	Acceptance Acceptance
@@ -58,5 +86,7 @@ type AcceptanceResult struct {
 // mutate or retain them after return; persist before ACK. No goroutine may keep
 // an acknowledged event only in memory. The context applies to acceptance I/O.
 type TransformedBlockAcceptor interface {
+	// AcceptTransformedBlock validates and durably accepts the normalized event before its result may
+	// be acknowledged.
 	AcceptTransformedBlock(context.Context, AcceptTransformedBlockRequest) (AcceptanceResult, error)
 }

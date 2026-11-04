@@ -1,5 +1,8 @@
 //go:build postgresintegration
 
+// repair_integration_test.go exercises audited failed-work allowance and stale-claim fencing in
+// the outbound adapter layer.
+
 package postgres
 
 import (
@@ -15,6 +18,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// testRepair checks audited finite retry allowance, repeat operation identity and stale-claim
+// fencing in PostgreSQL.
 func testRepair(t *testing.T, runtime, owner *pgxpool.Pool) {
 	for _, queue := range []string{"inbox"} {
 		for _, after := range []bool{false, true} {

@@ -1,3 +1,8 @@
+// main.go implements command startup, explicit adapter wiring and bounded resource lifetime in the
+// offline test and diagnostic infrastructure.
+
+// Package main provides command startup, explicit adapter wiring and bounded resource lifetime in
+// the offline test and diagnostic infrastructure.
 package main
 
 import (
@@ -19,6 +24,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+// main invokes the local tool entry point and reports a nonzero status on configuration or
+// execution failure.
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -27,6 +34,9 @@ func main() {
 		os.Exit(1)
 	}
 }
+
+// run starts the local deterministic RPC/ACK fixture listeners and joins them on signal
+// cancellation.
 func run(ctx context.Context) error {
 	head := uint64(104)
 	if value := os.Getenv("FIXTURE_HEAD"); value != "" {

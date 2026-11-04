@@ -1,3 +1,6 @@
+// repair.go parses the audited single-event repair mode and retry allowance at the startup
+// configuration boundary.
+
 package config
 
 import (
@@ -7,6 +10,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/application/ports/outbound"
 )
 
+// loadRepair parses an explicitly selected audited repair operation; ordinary startup leaves
+// repair disabled.
 func loadRepair(chain string) (*outbound.RepairRequest, error) {
 	const prefix = "TRANSFORMER_REPAIR_"
 	mode := os.Getenv("TRANSFORMER_MODE")

@@ -1,3 +1,6 @@
+// decode.go implements strict source/document decoding into service-owned domain values in the
+// outbound adapter layer.
+
 package jsonrpc
 
 import (
@@ -8,6 +11,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
 
+// transactionInfo retains decoded transaction identity and fields required to validate its
+// receipt.
 type transactionInfo struct {
 	meta   domain.Transaction
 	from   domain.Address
@@ -17,6 +22,8 @@ type transactionInfo struct {
 	london bool
 }
 
+// decodeBlock validates a mined block and full transaction membership while retaining its original
+// JSON result bytes.
 func decodeBlock(raw json.RawMessage, chain domain.ChainID, requested uint64) (domain.Extraction, []transactionInfo, uint64, error) {
 	var empty domain.Extraction
 	o, err := objectOf(raw)
@@ -112,6 +119,8 @@ func decodeBlock(raw json.RawMessage, chain domain.ChainID, requested uint64) (d
 	return extraction, txs, gasUsed, nil
 }
 
+// hashArray validates an array of fixed-width hashes without silently accepting null/missing
+// arrays.
 func hashArray(o object, key string) ([]domain.Hash, error) {
 	raw, err := arrayField(o, key)
 	if err != nil {
@@ -128,6 +137,7 @@ func hashArray(o object, key string) ([]domain.Hash, error) {
 	return result, nil
 }
 
+// checkWithdrawals validates supplied withdrawal fields without inventing missing fork-era data.
 func checkWithdrawals(o object) error {
 	_, root := o["withdrawalsRoot"]
 	_, list := o["withdrawals"]
@@ -156,6 +166,8 @@ func checkWithdrawals(o object) error {
 	return nil
 }
 
+// decodeTransaction parses transaction identity and type-specific fields needed to verify receipt
+// membership.
 func decodeTransaction(raw json.RawMessage, block domain.BlockID, index uint64, london bool) (transactionInfo, error) {
 	var empty transactionInfo
 	o, err := objectOf(raw)
@@ -220,6 +232,8 @@ func decodeTransaction(raw json.RawMessage, block domain.BlockID, index uint64, 
 	}, nil
 }
 
+// checkTransactionFields requires the fee/signature/access/blob/authorization fields applicable to
+// the transaction type.
 func checkTransactionFields(o object, kind uint64, chain domain.ChainID) error {
 	if kind <= 1 {
 		if err := o.quantities(256, "gasPrice"); err != nil {
@@ -345,6 +359,8 @@ func checkTransactionFields(o object, kind uint64, chain domain.ChainID) error {
 	return nil
 }
 
+// decodeReceipt validates receipt identity, index, outcome and logs against its enclosing block
+// and transaction.
 func decodeReceipt(raw json.RawMessage, header domain.Header, tx transactionInfo) (domain.Receipt, uint64, error) {
 	var empty domain.Receipt
 	o, err := objectOf(raw)
@@ -447,10 +463,13 @@ func decodeReceipt(raw json.RawMessage, header domain.Header, tx transactionInfo
 	return domain.Receipt{Block: block, TransactionHash: hash, TransactionIndex: index, Logs: logs}, gas, nil
 }
 
+// sameAddress compares nullable recipient/address representations without treating null as the
+// zero address.
 func sameAddress(a, b *domain.Address) bool {
 	return a == nil && b == nil || a != nil && b != nil && *a == *b
 }
 
+// decodeLog validates log identity, ordering fields and topic/data shapes within the receipt.
 func decodeLog(raw json.RawMessage, header domain.Header, tx transactionInfo) (domain.Log, error) {
 	var empty domain.Log
 	o, err := objectOf(raw)

@@ -1,3 +1,6 @@
+// store_test.go exercises durable acceptance, transactional state changes and safe database error
+// mapping in the outbound adapter layer.
+
 package postgres
 
 import (
@@ -12,6 +15,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+// snapshot builds a complete deterministic extraction for boundary tests; its hashes/provenance
+// are synthetic.
 func snapshot(chain domain.ChainID, number uint64, hash, parent byte) domain.Extraction {
 	id := domain.BlockID{ChainID: chain, Number: number, Hash: domain.Hash{hash}}
 	tx := domain.Transaction{Block: id, Hash: domain.Hash{99}, Index: 0}
@@ -25,6 +30,8 @@ func snapshot(chain domain.ChainID, number uint64, hash, parent byte) domain.Ext
 	}
 }
 
+// TestSnapshotRoundTrip compares raw bytes, metadata and provenance across the storage encoding
+// boundary.
 func TestSnapshotRoundTrip(t *testing.T) {
 	e := snapshot("1", 42, 2, 1)
 	metadata, when, err := encodeMetadata(e)
@@ -51,6 +58,8 @@ func TestSnapshotRoundTrip(t *testing.T) {
 	}
 }
 
+// TestValidationBeforeDatabaseIO requires invalid extraction input to fail before the storage
+// adapter begins database work.
 func TestValidationBeforeDatabaseIO(t *testing.T) {
 	for _, test := range []struct {
 		name   string
@@ -87,6 +96,8 @@ func TestValidationBeforeDatabaseIO(t *testing.T) {
 	}
 }
 
+// TestDatabaseErrorsAreSafe ensures storage errors retain useful classification without leaking
+// server details or connection credentials.
 func TestDatabaseErrorsAreSafe(t *testing.T) {
 	err := databaseError(&pgconn.PgError{Code: "23505", Message: "secret payload", Detail: "secret DSN"})
 	var dbErr *DatabaseError

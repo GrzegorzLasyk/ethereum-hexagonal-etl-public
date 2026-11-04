@@ -1,5 +1,8 @@
 //go:build postgresintegration
 
+// mainnet_seed_test.go exercises authentic offline fixture acquisition into isolated Extractor
+// storage in the outbound adapter layer.
+
 package postgres
 
 import (
@@ -15,6 +18,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/application/usecases"
 )
 
+// TestSeedRealFixture seeds one manifest-verified noncontiguous height in isolation.
+//
 // Only the explicit isolated real-data runner selects this test. Missing inputs
 // are failures, never a silent skip or a synthetic substitution.
 func TestSeedRealFixture(t *testing.T) {

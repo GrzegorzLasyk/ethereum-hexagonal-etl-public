@@ -1,3 +1,6 @@
+// mainnet.go implements manifest-verified authentic offline fixture runner configuration in the
+// offline test and diagnostic infrastructure.
+
 package main
 
 import (
@@ -11,6 +14,8 @@ import (
 	"time"
 )
 
+// realCase pins one local authentic artifact and manifest identity for an isolated noncontiguous-
+// height run.
 type realCase struct{ id, path, manifest, digest string }
 
 // Explicit local mode; ordinary unit tests/CI never read private artifacts.

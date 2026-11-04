@@ -1,5 +1,8 @@
 //go:build perfbaseline
 
+// enabled.go implements opt-in runtime, pgx and pool instrumentation for offline baselines in the
+// shared technical support layer, outside service domains.
+
 package baseline
 
 import (
@@ -17,6 +20,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// Runtime records process memory, allocation, GC and CPU observations for an offline baseline
+// sample.
 type Runtime struct {
 	UserCPUSeconds       float64 `json:"user_cpu_seconds"`
 	SystemCPUSeconds     float64 `json:"system_cpu_seconds"`
@@ -35,6 +40,8 @@ type Runtime struct {
 	PoolEmptyWaitSeconds float64 `json:"pool_empty_wait_seconds"`
 	PoolCanceledAcquires int64   `json:"pool_canceled_acquires"`
 }
+
+// Result groups baseline timing/resource measurements for exclusive report output.
 type Result struct {
 	DirectQueries   uint64                  `json:"direct_query_calls"`
 	BatchCalls      uint64                  `json:"batch_calls"`
@@ -48,6 +55,9 @@ type Result struct {
 	SQLWrites       uint64                  `json:"successful_insert_update_delete_statements"`
 	QueryErrors     uint64                  `json:"query_errors"`
 }
+
+// Probe owns opt-in baseline sampling/tracing state; the composition root closes it after
+// dependent workers stop.
 type Probe struct {
 	mu         sync.Mutex
 	file       *os.File
@@ -60,12 +70,19 @@ type Probe struct {
 	joined     chan struct{}
 	once       sync.Once
 }
+
+// traceKey is the private context key for a query start timestamp; it prevents collisions with
+// caller context values.
 type traceKey struct{}
+
+// query retains per-operation timing state between pgx trace callbacks, without SQL arguments.
 type query struct {
 	start time.Time
 	kind  string
 }
 
+// Configure requires explicit baseline opt-in and a new output path, then starts bounded
+// sampling/tracing state.
 func Configure(config *pgxpool.Config) (*Probe, error) {
 	path := os.Getenv("ETL_BASELINE_PROBE")
 	if path == "" {
@@ -85,6 +102,8 @@ func Configure(config *pgxpool.Config) (*Probe, error) {
 	config.ConnConfig.Tracer = p
 	return p, nil
 }
+
+// Attach attaches the pool for baseline observation; ordinary builds keep this hook inert.
 func (p *Probe) Attach(pool *pgxpool.Pool) {
 	if p.file == nil {
 		return
@@ -104,6 +123,8 @@ func (p *Probe) Attach(pool *pgxpool.Pool) {
 		}
 	}()
 }
+
+// sample samples runtime and pool counters under probe synchronization for the opt-in report.
 func (p *Probe) sample() {
 	var m runtime.MemStats
 	runtime.ReadMemStats(&m)
@@ -127,6 +148,9 @@ func (p *Probe) sample() {
 		r.PoolCanceledAcquires = s.CanceledAcquireCount()
 	}
 }
+
+// Close stops sampling and writes exclusive baseline evidence when enabled; ordinary builds
+// perform no output.
 func (p *Probe) Close() {
 	if p.file == nil {
 		return
@@ -156,6 +180,9 @@ func (p *Probe) Close() {
 		_ = p.file.Close()
 	})
 }
+
+// TraceQueryStart timestamps a pgx query through context without recording SQL text or parameter
+// values.
 func (p *Probe) TraceQueryStart(ctx context.Context, _ *pgx.Conn, d pgx.TraceQueryStartData) context.Context {
 	kind := "other"
 	fields := strings.Fields(d.SQL)
@@ -167,6 +194,9 @@ func (p *Probe) TraceQueryStart(ctx context.Context, _ *pgx.Conn, d pgx.TraceQue
 	}
 	return context.WithValue(ctx, traceKey{}, query{time.Now(), kind})
 }
+
+// TraceQueryEnd records elapsed query outcome and write effects for baseline analysis, including
+// errors.
 func (p *Probe) TraceQueryEnd(ctx context.Context, c *pgx.Conn, d pgx.TraceQueryEndData) {
 	q, ok := ctx.Value(traceKey{}).(query)
 	if !ok {
@@ -198,8 +228,12 @@ func (p *Probe) TraceQueryEnd(ctx context.Context, c *pgx.Conn, d pgx.TraceQuery
 // the entire SendBatch/Close interval; do not fabricate per-statement latencies.
 type batchTraceKey struct{}
 
+// Compile-time interface assertion checks adapter/interface compatibility at compile time without
+// allocating runtime state.
 var _ pgx.BatchTracer = (*Probe)(nil)
 
+// TraceBatchStart timestamps a pgx batch and records submitted statement count without recording
+// SQL/arguments.
 func (p *Probe) TraceBatchStart(ctx context.Context, _ *pgx.Conn, d pgx.TraceBatchStartData) context.Context {
 	p.mu.Lock()
 	p.result.BatchCalls++
@@ -207,6 +241,9 @@ func (p *Probe) TraceBatchStart(ctx context.Context, _ *pgx.Conn, d pgx.TraceBat
 	p.mu.Unlock()
 	return context.WithValue(ctx, batchTraceKey{}, time.Now())
 }
+
+// TraceBatchQuery records a statement outcome within a submitted batch; execution success alone is
+// not a committed transaction.
 func (p *Probe) TraceBatchQuery(_ context.Context, _ *pgx.Conn, d pgx.TraceBatchQueryData) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -216,6 +253,9 @@ func (p *Probe) TraceBatchQuery(_ context.Context, _ *pgx.Conn, d pgx.TraceBatch
 		p.result.SQLWrites++
 	}
 }
+
+// TraceBatchEnd records batch duration/error after result consumption; this is not a wire round-
+// trip counter.
 func (p *Probe) TraceBatchEnd(ctx context.Context, _ *pgx.Conn, d pgx.TraceBatchEndData) {
 	p.mu.Lock()
 	defer p.mu.Unlock()

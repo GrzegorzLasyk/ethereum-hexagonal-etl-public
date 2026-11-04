@@ -1,3 +1,6 @@
+// receiver_test.go exercises gRPC-to-application request mapping and ACK-after-persistence
+// semantics in the inbound adapter layer.
+
 package grpc
 
 import (
@@ -22,12 +25,17 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// acceptFunc adapts a callback to the durable inbound acceptance port for receiver tests.
 type acceptFunc func(context.Context, inbound.AcceptTransformedBlockRequest) (inbound.AcceptanceResult, error)
 
+// AcceptTransformedBlock delegates to the injected test callback, allowing controlled completion,
+// blocking or failure at the application port.
 func (f acceptFunc) AcceptTransformedBlock(ctx context.Context, r inbound.AcceptTransformedBlockRequest) (inbound.AcceptanceResult, error) {
 	return f(ctx, r)
 }
 
+// request builds a valid deterministic application/transport request so one invariant can be
+// varied per case.
 func request() *etlv1.SubmitTransformedBlockRequest {
 	block := &etlv1.BlockIdentity{ChainId: "1", Number: proto.Uint64(10), BlockHash: []byte(strings.Repeat("a", 32)), ParentHash: []byte(strings.Repeat("b", 32))}
 	return &etlv1.SubmitTransformedBlockRequest{
@@ -36,6 +44,7 @@ func request() *etlv1.SubmitTransformedBlockRequest {
 	}
 }
 
+// receiver wires a real gRPC receiver to the supplied acceptance fake with valid test limits.
 func receiver(t *testing.T, a inbound.TransformedBlockAcceptor) *Receiver {
 	t.Helper()
 	r, err := NewReceiver("1", grpccontract.DefaultLimits(), a)
@@ -45,6 +54,8 @@ func receiver(t *testing.T, a inbound.TransformedBlockAcceptor) *Receiver {
 	return r
 }
 
+// TestMappingAndDurableOutcomes checks transport-to-port mapping and only explicit durable
+// acceptance results become successful ACKs.
 func TestMappingAndDurableOutcomes(t *testing.T) {
 	for _, outcome := range []inbound.Acceptance{inbound.DurablyAccepted, inbound.AlreadyAccepted} {
 		req := request()
@@ -85,6 +96,8 @@ func TestMappingAndDurableOutcomes(t *testing.T) {
 	}
 }
 
+// TestValidationNeverDelegates checks invalid receiver metadata/payload cannot reach the durable
+// acceptance port.
 func TestValidationNeverDelegates(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -128,6 +141,8 @@ func TestValidationNeverDelegates(t *testing.T) {
 	}
 }
 
+// TestAcceptanceFailuresNeverACK requires receiver errors to remain failures instead of
+// synthesizing durable acceptance.
 func TestAcceptanceFailuresNeverACK(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -173,6 +188,8 @@ func TestAcceptanceFailuresNeverACK(t *testing.T) {
 	}
 }
 
+// TestNoACKBeforePortCompletes holds the acceptance port open and proves gRPC cannot acknowledge
+// input still awaiting persistence.
 func TestNoACKBeforePortCompletes(t *testing.T) {
 	entered, release, finished := make(chan struct{}), make(chan struct{}), make(chan error, 1)
 	r := receiver(t, acceptFunc(func(_ context.Context, req inbound.AcceptTransformedBlockRequest) (inbound.AcceptanceResult, error) {
@@ -193,6 +210,8 @@ func TestNoACKBeforePortCompletes(t *testing.T) {
 	}
 }
 
+// TestCanceledBeforeAcceptance requires an already-canceled request to avoid invoking durable
+// acceptance.
 func TestCanceledBeforeAcceptance(t *testing.T) {
 	r := receiver(t, acceptFunc(func(context.Context, inbound.AcceptTransformedBlockRequest) (inbound.AcceptanceResult, error) {
 		t.Fatal("canceled request reached port")
@@ -210,6 +229,8 @@ func TestCanceledBeforeAcceptance(t *testing.T) {
 	}
 }
 
+// TestConstructorRejectsInvalidConfig checks invalid configuration fails before opening a usable
+// acquisition/receiver boundary.
 func TestConstructorRejectsInvalidConfig(t *testing.T) {
 	if _, err := NewServer("", grpccontract.DefaultLimits(), nil); err == nil {
 		t.Fatal("missing chain accepted")
@@ -219,6 +240,8 @@ func TestConstructorRejectsInvalidConfig(t *testing.T) {
 	}
 }
 
+// TestGRPCSkeletonAndLargeMessage checks the real transport boundary with bounded payloads.
+//
 // This test exercises protobuf encoding, service registration and configured
 // transport limits entirely in memory, with no listener or production sender.
 func TestGRPCSkeletonAndLargeMessage(t *testing.T) {
@@ -254,6 +277,8 @@ func TestGRPCSkeletonAndLargeMessage(t *testing.T) {
 	}
 }
 
+// TestExactPayloadLimitAndEmptyObject checks inclusive payload limits and object shape without
+// confusing size validity with domain completeness.
 func TestExactPayloadLimitAndEmptyObject(t *testing.T) {
 	req := request()
 	req.PayloadJson = []byte("{}")

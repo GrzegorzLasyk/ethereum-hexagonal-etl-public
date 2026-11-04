@@ -1,3 +1,6 @@
+// worker_test.go exercises bounded application polling with cancellation, progress logging and
+// worker joining in the inbound adapter layer.
+
 package indexer
 
 import (
@@ -13,9 +16,15 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
 
+// cycleFunc adapts a test callback to the sequential indexing-cycle port.
 type cycleFunc func(context.Context) (inbound.IndexResult, error)
 
+// Cycle delegates to the injected test callback, allowing controlled completion, blocking or
+// failure at the application port.
 func (f cycleFunc) Cycle(ctx context.Context) (inbound.IndexResult, error) { return f(ctx) }
+
+// TestWorkerBoundedFailureAndRecoveryHalt checks finite cycle errors and unprovable recovery stop
+// worker acquisition instead of retrying forever.
 func TestWorkerBoundedFailureAndRecoveryHalt(t *testing.T) {
 	for _, tc := range []struct {
 		err  error
@@ -31,6 +40,9 @@ func TestWorkerBoundedFailureAndRecoveryHalt(t *testing.T) {
 		}
 	}
 }
+
+// TestWorkerWaitsForCancellationAndReturnsOnDone checks polling stays bounded while waiting and
+// finite completion returns without requiring a signal.
 func TestWorkerWaitsForCancellationAndReturnsOnDone(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	calls := 0
@@ -58,6 +70,9 @@ func TestWorkerWaitsForCancellationAndReturnsOnDone(t *testing.T) {
 		t.Fatal("worker returned before in-flight operation")
 	}
 }
+
+// TestWorkerBackpressureDoesNotExhaustFailureBudget treats a capacity pause as waiting rather than
+// consuming the consecutive-error allowance.
 func TestWorkerBackpressureDoesNotExhaustFailureBudget(t *testing.T) {
 	calls := 0
 	w, _ := New(cycleFunc(func(context.Context) (inbound.IndexResult, error) {

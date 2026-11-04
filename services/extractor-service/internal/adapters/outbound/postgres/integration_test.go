@@ -1,5 +1,8 @@
 //go:build postgresintegration
 
+// integration_test.go exercises real owning-role PostgreSQL transactions, claims and failure
+// recovery in the outbound adapter layer.
+
 package postgres
 
 import (
@@ -21,6 +24,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// integrationPool opens the explicitly configured integration connection and verifies the expected
+// role before test SQL.
 func integrationPool(t *testing.T, variable, role string) *pgxpool.Pool {
 	t.Helper()
 	dsn := os.Getenv(variable)
@@ -49,6 +54,8 @@ func integrationPool(t *testing.T, variable, role string) *pgxpool.Pool {
 	return p
 }
 
+// TestPostgresIntegration runs owning-role PostgreSQL persistence and failure scenarios only with
+// explicit integration database configuration.
 func TestPostgresIntegration(t *testing.T) {
 	runtime := integrationPool(t, "EXTRACTOR_TEST_DATABASE_URL", "extractor_runtime")
 	owner := integrationPool(t, "EXTRACTOR_TEST_MIGRATOR_URL", "extractor_migrator")
@@ -547,6 +554,8 @@ type commitFaultDB struct {
 	failure error
 }
 
+// BeginTx wraps or returns the controlled test transaction so commit/failure boundaries can be
+// injected without changing production code.
 func (d commitFaultDB) BeginTx(ctx context.Context, o pgx.TxOptions) (pgx.Tx, error) {
 	tx, err := d.database.BeginTx(ctx, o)
 	if err != nil {
@@ -555,6 +564,7 @@ func (d commitFaultDB) BeginTx(ctx context.Context, o pgx.TxOptions) (pgx.Tx, er
 	return commitFaultTx{Tx: tx, after: d.after, cancel: d.cancel, failure: d.failure}, nil
 }
 
+// commitFaultTx injects commit failure/cancellation before or after a real transaction commit.
 type commitFaultTx struct {
 	pgx.Tx
 	after   bool
@@ -562,6 +572,8 @@ type commitFaultTx struct {
 	failure error
 }
 
+// Commit injects a controlled lost/failed commit acknowledgement around the real transaction to
+// test explicit outcome uncertainty.
 func (t commitFaultTx) Commit(ctx context.Context) error {
 	if t.after {
 		if err := t.Tx.Commit(ctx); err != nil {

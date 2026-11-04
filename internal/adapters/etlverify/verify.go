@@ -1,3 +1,6 @@
+// verify.go implements bounded durable pipeline completion decisions independent of readiness
+// alone in the shared technical support layer, outside service domains.
+
 // Package etlverify is read-only operator tooling, not a service dependency.
 // Each query must run as the named service's runtime role in its own connection.
 package etlverify
@@ -13,15 +16,23 @@ import (
 	"time"
 )
 
+// Target pins the chain, block identity and expected record counts required by the completion
+// verifier.
 type Target struct {
 	Number                       uint64
 	Hash                         string
 	Transactions, Receipts, Logs int
 }
 
+// MainnetBlock pins the approved one-block Mainnet completion target, including hash and record
+// counts.
 var MainnetBlock = Target{1000000, "8e38b4dbf6b11fcc3b9dee84fb7986e29ca0a02cecd8977c161ff7333329681e", 2, 2, 1}
 
+// Query runs an observation against one owning runtime role; verification never requires a cross-
+// service transaction.
 type Query func(context.Context, string, string) ([]byte, error)
+
+// Snapshot captures one service observation used to decide durable pipeline completion.
 type Snapshot struct {
 	Ready         bool              `json:"ready"`
 	States        map[string]string `json:"states"`
@@ -31,13 +42,28 @@ type Snapshot struct {
 	Provenance    string            `json:"provenance"`
 	Members       []string          `json:"members"`
 }
+
+// Report collects service completion evidence and distinguishes incomplete, failed and stuck work.
 type Report map[string]Snapshot
 
+// ErrIncomplete signals ETL completion deadline exceeded. Callers can match this category with
+// errors.Is without parsing error text.
 var ErrIncomplete = errors.New("ETL completion deadline exceeded")
+
+// ErrFailed signals ETL contains failed events. Callers can match this category with errors.Is
+// without parsing error text.
 var ErrFailed = errors.New("ETL contains failed events")
+
+// ErrStuck signals ETL contains expired processing/delivery leases. Callers can match this
+// category with errors.Is without parsing error text.
 var ErrStuck = errors.New("ETL contains expired processing/delivery leases")
+
+// ErrObservation signals ETL database observation unavailable. Callers can match this category
+// with errors.Is without parsing error text.
 var ErrObservation = errors.New("ETL database observation unavailable")
 
+// Validate requires a pinned chain/block/hash/count target before completion observations are
+// accepted.
 func (t Target) Validate() error {
 	b, e := hex.DecodeString(t.Hash)
 	if e != nil || len(b) != 32 || strings.ToLower(t.Hash) != t.Hash || t.Transactions < 0 || t.Receipts != t.Transactions || t.Logs < 0 {
@@ -65,6 +91,9 @@ func Observe(ctx context.Context, q Query, t Target) (Report, error) {
 	}
 	return result, nil
 }
+
+// Complete requires every service observation to be ready and complete, with no failed or stuck
+// target work.
 func (r Report) Complete() bool {
 	ex, x := r["extractor"]
 	tr, y := r["transformer"]
@@ -92,6 +121,8 @@ func (r Report) Complete() bool {
 	return true
 }
 
+// Wait polls complete durable pipeline evidence until success, known failure/stall or context
+// deadline; a checkpoint alone cannot pass.
 func Wait(ctx context.Context, q Query, t Target, timeout, poll time.Duration) (Report, error) {
 	if q == nil || timeout <= 0 || timeout > 2*time.Minute || poll <= 0 {
 		return nil, errors.New("invalid verifier bounds")
@@ -149,6 +180,7 @@ func (r Report) Summary() string {
 	return strings.Join(parts, "; ")
 }
 
+// validStates checks observed queue states against the completion protocol's fixed vocabulary.
 func validStates(service string, states map[string]string) bool {
 	expected := 1
 	if service == "transformer" {

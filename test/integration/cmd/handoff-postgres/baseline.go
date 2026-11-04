@@ -1,3 +1,8 @@
+// baseline.go implements explicit opt-in benchmark configuration and isolated scenario
+// orchestration in the offline test and diagnostic infrastructure.
+
+// Package main runs isolated real-process handoff checks and explicitly selected authentic replay
+// or performance scenarios.
 package main
 
 import (
@@ -20,7 +25,10 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/test/performance"
 )
 
+// baselineRun names a validated scenario file and its prepared test binary for one isolated run.
 type baselineRun struct{ specPath, testBinary string }
+
+// baselineOptions holds explicit opt-in and bounded dataset/worker/batch/repetition selections.
 type baselineOptions struct {
 	opt                             bool
 	dataset, fixtures, out, workers string
@@ -28,6 +36,8 @@ type baselineOptions struct {
 	loaderBatchSize                 int
 }
 
+// baselineFlags parses explicit opt-in, dataset and bounded repetition/resource settings for the
+// offline baseline runner.
 func baselineFlags(args []string) (baselineOptions, error) {
 	var o baselineOptions
 	f := flag.NewFlagSet("baseline", flag.ContinueOnError)
@@ -47,6 +57,9 @@ func baselineFlags(args []string) (baselineOptions, error) {
 	_, err := baselineWorkers(o.workers)
 	return o, err
 }
+
+// baselineWorkers parses the supported worker-count list without inventing unbounded concurrency
+// scenarios.
 func baselineWorkers(raw string) ([]int, error) {
 	var values []int
 	seen := map[int]bool{}
@@ -60,6 +73,9 @@ func baselineWorkers(raw string) ([]int, error) {
 	}
 	return values, nil
 }
+
+// startBaseline orchestrates bounded offline datasets in separate projects and records reports
+// only through the integrity-gated runner.
 func startBaseline(ctx context.Context, args []string) error {
 	o, e := baselineFlags(args)
 	if e != nil {

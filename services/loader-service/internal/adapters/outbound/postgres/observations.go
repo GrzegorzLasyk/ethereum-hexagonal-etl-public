@@ -1,3 +1,6 @@
+// observations.go implements neighbor observation updates without changing canonicality in the
+// outbound adapter layer.
+
 package postgres
 
 import (

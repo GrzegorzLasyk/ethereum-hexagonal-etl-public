@@ -1,3 +1,6 @@
+// validation.go implements pure value, membership and identity validation at the local boundary in
+// the pure domain layer.
+
 package domain
 
 import (
@@ -8,9 +11,17 @@ import (
 )
 
 var (
-	ErrInvalid     = errors.New("invalid Ethereum data")
-	ErrIncomplete  = errors.New("incomplete Ethereum block")
-	ErrIdentity    = errors.New("Ethereum identity mismatch")
+	// ErrInvalid signals invalid Ethereum data. Callers can match this category with errors.Is without
+	// parsing error text.
+	ErrInvalid = errors.New("invalid Ethereum data")
+	// ErrIncomplete signals incomplete Ethereum block. Callers can match this category with errors.Is
+	// without parsing error text.
+	ErrIncomplete = errors.New("incomplete Ethereum block")
+	// ErrIdentity signals Ethereum identity mismatch. Callers can match this category with errors.Is
+	// without parsing error text.
+	ErrIdentity = errors.New("Ethereum identity mismatch")
+	// ErrUnsupported signals unsupported Ethereum data. Callers can match this category with errors.Is
+	// without parsing error text.
 	ErrUnsupported = errors.New("unsupported Ethereum data")
 )
 
@@ -20,9 +31,18 @@ type ValidationError struct {
 	Field string
 }
 
+// Error formats the validation category/field without copying invalid source values.
 func (e *ValidationError) Error() string { return fmt.Sprintf("%s: %s", e.Kind, e.Field) }
+
+// Unwrap exposes the domain error category for permanent/transient classification.
 func (e *ValidationError) Unwrap() error { return e.Kind }
-func Invalid(field string) error         { return &ValidationError{ErrInvalid, field} }
+
+// Invalid constructs a field-specific domain validation failure without including the field's
+// potentially sensitive value.
+func Invalid(field string) error { return &ValidationError{ErrInvalid, field} }
+
+// Decimal recognizes canonical nonnegative decimal integers and rejects signs, leading zeroes and
+// nondecimal text.
 func Decimal(s string, bits int) bool {
 	if s == "" || len(s) > 1 && s[0] == '0' {
 		return false
@@ -35,18 +55,32 @@ func Decimal(s string, bits int) bool {
 	n, ok := new(big.Int).SetString(s, 10)
 	return ok && (bits == 0 || n.BitLen() <= bits)
 }
-func (q Quantity) Valid() bool           { return Decimal(string(q), 256) }
-func (c ChainID) Valid() bool            { return Decimal(string(c), 0) }
+
+// Valid checks canonical exact decimal form rather than parsing through a floating-point value.
+func (q Quantity) Valid() bool { return Decimal(string(q), 256) }
+
+// Valid checks canonical nonnegative decimal chain identity.
+func (c ChainID) Valid() bool { return Decimal(string(c), 0) }
+
+// Required requires a present non-null optional value rather than substituting a zero value.
 func Required[T any](o Optional[T]) bool { return o.HasValue() }
+
+// Kind resolves the modeled transaction kind while preserving legacy behavior for an absent type
+// field.
 func Kind(t Optional[uint64]) uint64 {
 	if t.HasValue() {
 		return t.Value
 	}
 	return 0
 }
+
+// sameRecipient compares optional recipient values with their presence/null semantics intact.
 func sameRecipient(a, b Optional[Address]) bool {
 	return a.Present && b.Present && a.Null == b.Null && (a.Null || a.Value == b.Value)
 }
+
+// cmp compares exact decimal quantities without overflowing a machine integer or rounding through
+// floating point.
 func cmp(a, b Quantity) int {
 	x, _ := new(big.Int).SetString(string(a), 10)
 	y, _ := new(big.Int).SetString(string(b), 10)

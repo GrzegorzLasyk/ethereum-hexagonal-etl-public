@@ -1,5 +1,8 @@
 //go:build perfbaseline
 
+// enabled_test.go exercises opt-in runtime, pgx and pool instrumentation for offline baselines in
+// the shared technical support layer, outside service domains.
+
 package baseline
 
 import (
@@ -17,6 +20,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// TestProbeOptInAndExclusiveOutput requires explicit baseline instrumentation consent and refuses
+// overwriting an existing evidence file.
 func TestProbeOptInAndExclusiveOutput(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "probe.json")
 	t.Setenv("ETL_BASELINE_PROBE", path)
@@ -69,6 +74,8 @@ func TestProbeOptInAndExclusiveOutput(t *testing.T) {
 	}
 }
 
+// TestBatchProbeCountsWithoutRecordingSQL checks pgx submission/statement counters while ensuring
+// SQL text and argument values are absent from evidence.
 func TestBatchProbeCountsWithoutRecordingSQL(t *testing.T) {
 	p := &Probe{result: Result{Queries: map[string]Distribution{}}}
 	var wg sync.WaitGroup

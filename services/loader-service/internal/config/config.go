@@ -1,3 +1,8 @@
+// config.go implements validated environment configuration and conservative startup limits in the
+// startup configuration boundary.
+
+// Package config provides validated environment configuration and conservative startup limits in
+// the startup configuration boundary.
 package config
 
 import (
@@ -14,6 +19,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/domain"
 )
 
+// Config holds validated startup identities, transport/resource limits and worker lifetime
+// settings; URLs are private.
 type Config struct {
 	SQLBatchSize                                                                     int
 	AdmissionCapacity                                                                int
@@ -28,6 +35,8 @@ type Config struct {
 	PollInterval, ProcessTimeout, Lease, InitialBackoff, MaxBackoff, ShutdownTimeout time.Duration
 }
 
+// Load parses environment configuration and validates required identities, resource budgets and
+// lifetime relationships before startup.
 func Load() (Config, error) {
 	cfg := Config{DatabaseURL: os.Getenv("LOADER_DATABASE_URL"), ChainID: domain.ChainID(os.Getenv("LOADER_CHAIN_ID")), ListenAddress: os.Getenv("LOADER_GRPC_ADDRESS")}
 	switch strings.ToUpper(strings.TrimSpace(os.Getenv("LOG_LEVEL"))) {

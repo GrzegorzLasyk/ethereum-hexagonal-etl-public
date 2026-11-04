@@ -1,3 +1,6 @@
+// complete.go implements atomic normalized block writes and Inbox completion under the chain/lease
+// fence in the outbound adapter layer.
+
 package postgres
 
 import (

@@ -1,3 +1,6 @@
+// indexing.go parses acquisition/reindex modes, inclusive ranges, confirmation/recovery depth and
+// admission watermarks.
+
 package config
 
 import (
@@ -12,6 +15,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
 
+// IndexingConfig selects an acquisition/operator mode and its range, source, capacity and lifetime
+// limits.
 type IndexingConfig struct {
 	Mode          string
 	RunTimeout    time.Duration
@@ -24,6 +29,8 @@ type IndexingConfig struct {
 	Replay        outbound.ReplayRequest
 }
 
+// loadIndexing selects dispatch/index/drain/replay/reindex configuration and requires the bounds
+// appropriate to that mode.
 func loadIndexing(c Config) (IndexingConfig, error) {
 	x := IndexingConfig{Mode: os.Getenv("EXTRACTOR_MODE"), OperationID: os.Getenv("EXTRACTOR_OPERATION_ID")}
 	if x.Mode == "" {
@@ -153,6 +160,9 @@ func loadIndexing(c Config) (IndexingConfig, error) {
 	}
 	return x, nil
 }
+
+// uintSetting reads an unsigned decimal setting, distinguishing a missing required value from an
+// explicit zero.
 func uintSetting(name string, def uint64, required bool) (uint64, error) {
 	raw := os.Getenv(name)
 	if raw == "" {
@@ -167,6 +177,9 @@ func uintSetting(name string, def uint64, required bool) (uint64, error) {
 	}
 	return n, nil
 }
+
+// durationSetting parses a bounded duration or its documented default and reports only the setting
+// name on failure.
 func durationSetting(name string, def time.Duration) (time.Duration, error) {
 	raw := os.Getenv(name)
 	if raw == "" {

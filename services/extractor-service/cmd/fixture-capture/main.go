@@ -1,4 +1,7 @@
-// fixture-capture is explicit operator tooling, never started by services or CI.
+// main.go implements command startup, explicit adapter wiring and bounded resource lifetime in the
+// service composition/operator entry point.
+
+// Command fixture-capture is explicit operator tooling, never started by services or CI.
 package main
 
 import (
@@ -12,6 +15,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/adapters/outbound/jsonrpc"
 )
 
+// main invokes the bounded service/operator entry point and exits nonzero on startup or execution
+// failure.
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -23,6 +28,8 @@ func main() {
 	fmt.Println("fixture operation completed")
 }
 
+// run dispatches manifest/verify or explicitly opted-in capture commands, returning safe failures
+// without printing credentials.
 func run(ctx context.Context, args []string, get func(string) string) error {
 	if len(args) == 2 && args[0] == "validate" {
 		return fixturecapture.ValidateFile(ctx, args[1])

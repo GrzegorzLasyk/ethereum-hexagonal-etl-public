@@ -1,3 +1,8 @@
+// main.go implements command startup, explicit adapter wiring and bounded resource lifetime in the
+// service composition/operator entry point.
+
+// Package main provides command startup, explicit adapter wiring and bounded resource lifetime in
+// the service composition/operator entry point.
 package main
 
 import (
@@ -29,6 +34,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// main invokes the bounded service/operator entry point and exits nonzero on startup or execution
+// failure.
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

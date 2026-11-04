@@ -1,3 +1,6 @@
+// smoke_config_test.go exercises offline guards for the separately opted-in live smoke in the
+// outbound adapter layer.
+
 package jsonrpc
 
 import (
@@ -36,6 +39,8 @@ func smokeSettings(get func(string) string) (Config, uint64, time.Duration, erro
 	return cfg, n, duration, nil
 }
 
+// TestLiveSmokeGateOffline checks opt-in and CI restrictions using configuration only, without
+// live Ethereum requests.
 func TestLiveSmokeGateOffline(t *testing.T) {
 	settings := map[string]string{"ETHEREUM_LIVE_MAINNET_OPT_IN": "true", "ETHEREUM_RPC_URL": "https://mainnet.infura.io/v3/offline-placeholder", "ETHEREUM_SMOKE_BLOCK": "42", "ETHEREUM_SMOKE_MAX_REQUESTS": "20", "ETHEREUM_SMOKE_TIMEOUT": "1m"}
 	get := func(k string) string { return settings[k] }
@@ -82,6 +87,8 @@ func TestLiveSmokeGateOffline(t *testing.T) {
 	}
 }
 
+// TestLiveSmokeExplicitBlockOffline requires a configured historical height and rejects silently
+// selecting latest in the live smoke setup.
 func TestLiveSmokeExplicitBlockOffline(t *testing.T) {
 	settings := map[string]string{"ETHEREUM_LIVE_MAINNET_OPT_IN": "true", "ETHEREUM_RPC_URL": "https://mainnet.infura.io/v3/offline-placeholder", "ETHEREUM_SMOKE_BLOCK": strconv.FormatUint(fixtureNumber, 10), "ETHEREUM_SMOKE_MAX_REQUESTS": "100", "ETHEREUM_SMOKE_TIMEOUT": "2m"}
 	cfg, number, _, err := smokeSettings(func(k string) string { return settings[k] })

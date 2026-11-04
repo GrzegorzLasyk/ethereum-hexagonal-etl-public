@@ -1,3 +1,6 @@
+// rpc_test.go exercises actual RPC attempt/retry/budget metrics with process restart semantics in
+// the shared technical support layer, outside service domains.
+
 package metrics
 
 import (
@@ -7,6 +10,8 @@ import (
 	"testing"
 )
 
+// TestRPCBudgetExposition checks finite/unlimited attempt metrics and process restart/reset
+// semantics without high-cardinality labels.
 func TestRPCBudgetExposition(t *testing.T) {
 	r := New()
 	var b bytes.Buffer

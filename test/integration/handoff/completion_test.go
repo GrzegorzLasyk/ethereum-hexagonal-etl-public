@@ -1,5 +1,10 @@
 //go:build postgresintegration
 
+// completion_test.go exercises bounded Mainnet target validation and no-RPC durable completion
+// inspection in the offline test and diagnostic infrastructure.
+
+// Package handoff_test verifies real-process durable handoffs, completion, authentic replay and
+// integrity-gated measurements against isolated storage.
 package handoff_test
 
 import (
@@ -12,6 +17,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// completionQuery adapts per-service owning pools to the verifier's diagnostic interface without a
+// cross-schema runtime role.
 func completionQuery(t *testing.T, pools map[string]*pgxpool.Pool) etlverify.Query {
 	return func(ctx context.Context, service, sql string) ([]byte, error) {
 		var data []byte
@@ -19,6 +26,8 @@ func completionQuery(t *testing.T, pools map[string]*pgxpool.Pool) etlverify.Que
 		return data, err
 	}
 }
+
+// completionTarget derives a pinned expected block/count target from the isolated seeded dataset.
 func completionTarget(t *testing.T, ex *pgxpool.Pool, real *realInput) etlverify.Target {
 	t.Helper()
 	target := etlverify.Target{Transactions: 2, Receipts: 2, Logs: 1}
@@ -32,6 +41,9 @@ func completionTarget(t *testing.T, ex *pgxpool.Pool, real *realInput) etlverify
 	}
 	return target
 }
+
+// verifyPartialCompletion requires advanced source progress with unfinished downstream queues to
+// remain incomplete within the bounded verifier.
 func verifyPartialCompletion(t *testing.T, pools map[string]*pgxpool.Pool, target etlverify.Target) {
 	t.Helper()
 	q := completionQuery(t, pools)
@@ -47,6 +59,9 @@ func verifyPartialCompletion(t *testing.T, pools map[string]*pgxpool.Pool, targe
 	}
 	t.Log("PASS: advanced checkpoint and pending Outbox are incomplete; bounded verifier times out")
 }
+
+// verifyCompleteAndFaults checks a complete pipeline passes and injected failed/stuck/unavailable
+// states are reported distinctly.
 func verifyCompleteAndFaults(t *testing.T, pools map[string]*pgxpool.Pool, target etlverify.Target) {
 	t.Helper()
 	q := completionQuery(t, pools)

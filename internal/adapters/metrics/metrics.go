@@ -1,3 +1,6 @@
+// metrics.go implements low-cardinality operation/queue exposition with snapshot failure/freshness
+// semantics in the shared technical support layer, outside service domains.
+
 // Package metrics implements bounded, process-local Prometheus text exposition.
 // It is adapter infrastructure, never a domain/application dependency.
 package metrics
@@ -12,10 +15,18 @@ import (
 	"time"
 )
 
+// bounds defines fixed operation-duration histogram buckets in seconds; it is not per-event
+// configuration.
 var bounds = [...]float64{.001, .01, .1, .5, 1, 5, 30, 120}
+
+// outcomes defines the fixed outcome label vocabulary to prevent metric cardinality from growing
+// with errors.
 var outcomes = [...]string{"completed", "delivered", "retry", "failed", "interrupted", "unknown", "waiting", "backpressure", "done", "rewound", "progress"}
+
+// operations defines supported operation labels, excluding payload/event identity.
 var operations = map[string]bool{"fetch_receipts": true, "process_inbox": true, "dispatch_outbox": true, "claim_inbox": true, "claim_outbox": true, "persist_block": true, "index_cycle": true, "reindex_cycle": true, "index_block": true, "reindex_block": true}
 
+// operation holds one fixed operation/outcome counter and duration histogram.
 type operation struct {
 	Counts            map[string]uint64
 	Buckets           [len(bounds)]uint64
@@ -23,6 +34,9 @@ type operation struct {
 	Sum               float64
 	Retries, Failures uint64
 }
+
+// Registry owns process-local low-cardinality metrics and synchronization; payloads and event IDs
+// are not metric labels.
 type Registry struct {
 	rpc             rpcMetrics
 	admission       admissionMetrics
@@ -37,6 +51,7 @@ type Registry struct {
 	collecting      chan struct{}
 }
 
+// New creates a registry for the fixed service label and bounded operation vocabulary.
 func New(names ...string) *Registry {
 	r := &Registry{ops: map[string]*operation{}, started: time.Now(), collecting: make(chan struct{}, 1)}
 	for _, name := range names {
@@ -88,6 +103,9 @@ func (r *Registry) Observe(name, outcome string, d time.Duration) {
 		op.Failures++
 	}
 }
+
+// Head records a provider head observation and its freshness timestamp for later metric
+// exposition.
 func (r *Registry) Head(n uint64, at time.Time) {
 	if r == nil {
 		return
@@ -99,6 +117,8 @@ func (r *Registry) Head(n uint64, at time.Time) {
 		r.headAt = at
 	}
 }
+
+// Cycle records acquisition waiting/backpressure/recovery state for operational visibility.
 func (r *Registry) Cycle(backpressure bool) {
 	if r == nil {
 		return
@@ -112,6 +132,8 @@ func (r *Registry) Cycle(backpressure bool) {
 	}
 }
 
+// Queue describes one durable queue for metrics exposition.
+//
 // Snapshot is a technical exposition DTO, mapped from service-owned ports.
 // Backlog includes failed retained work; Done is a current durable row count.
 type Queue struct {
@@ -119,6 +141,9 @@ type Queue struct {
 	Pending, InFlight, Failed, Done int64
 	OldestAge                       float64
 }
+
+// Snapshot carries owning-service queue, admission and optional checkpoint gauges for exposition.
+// It is an operational sample, not evidence of end-to-end completion.
 type Snapshot struct {
 	AdmissionUsed, AdmissionLimit int64
 	Queues                        []Queue
@@ -127,13 +152,18 @@ type Snapshot struct {
 	Revision                      int64
 }
 
+// family writes Prometheus HELP/TYPE metadata for a fixed metric family.
 func family(b *bytes.Buffer, name, kind, help string) {
 	fmt.Fprintf(b, "# HELP %s %s\n# TYPE %s %s\n", name, help, name, kind)
 }
+
+// gauge writes one numeric gauge sample using the supplied fixed metric name.
 func gauge(b *bytes.Buffer, name, help string, v any) {
 	family(b, name, "gauge", help)
 	fmt.Fprintf(b, "%s %v\n", name, v)
 }
+
+// flag converts a boolean observation to the numeric representation used by Prometheus gauges.
 func flag(v bool) int {
 	if v {
 		return 1
@@ -201,6 +231,9 @@ func (r *Registry) Handler(read func(context.Context) (Snapshot, error)) http.Ha
 		_, _ = w.Write(b.Bytes())
 	})
 }
+
+// writeOperations emits bounded operation/outcome counters and histograms; event IDs never become
+// labels.
 func (r *Registry) writeOperations(b *bytes.Buffer) {
 	names := make([]string, 0, len(r.ops))
 	for n := range r.ops {
@@ -230,6 +263,9 @@ func (r *Registry) writeOperations(b *bytes.Buffer) {
 		fmt.Fprintf(b, "etl_operation_duration_seconds_bucket{operation=%q,le=\"+Inf\"} %d\netl_operation_duration_seconds_sum{operation=%q} %g\netl_operation_duration_seconds_count{operation=%q} %d\n", n, op.Count, n, op.Sum, n, op.Count)
 	}
 }
+
+// writeSnapshot emits owning-schema queue/progress samples from a successful snapshot, keeping
+// freshness explicit.
 func (r *Registry) writeSnapshot(b *bytes.Buffer, s Snapshot) {
 	family(b, "etl_queue_events", "gauge", "Durable row count by queue and state at scrape time.")
 	for _, q := range s.Queues {

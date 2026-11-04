@@ -1,3 +1,6 @@
+// indexing_test.go exercises range eligibility, admission and operation-identity rules in the
+// startup configuration boundary.
+
 package config
 
 import (
@@ -5,6 +8,8 @@ import (
 	"testing"
 )
 
+// indexEnvironment sets test-scoped environment values so cases do not depend on the caller's
+// startup configuration.
 func indexEnvironment(t *testing.T) {
 	t.Helper()
 	for k, v := range map[string]string{
@@ -13,6 +18,9 @@ func indexEnvironment(t *testing.T) {
 		t.Setenv(k, v)
 	}
 }
+
+// TestIndexingConfiguration checks explicit range, confirmation/recovery and admission
+// prerequisites for the selected mode.
 func TestIndexingConfiguration(t *testing.T) {
 	indexEnvironment(t)
 	c, err := Load()
@@ -43,6 +51,9 @@ func TestIndexingConfiguration(t *testing.T) {
 		})
 	}
 }
+
+// TestOperatorModes checks replay/reindex/drain configuration remains explicit and does not
+// silently select ordinary acquisition.
 func TestOperatorModes(t *testing.T) {
 	indexEnvironment(t)
 	t.Setenv("EXTRACTOR_MODE", "reindex")
@@ -74,6 +85,8 @@ func TestOperatorModes(t *testing.T) {
 	}
 }
 
+// TestReceiptConcurrencyConfiguration checks the conservative receipt default and supported upper
+// bound before workers can start.
 func TestReceiptConcurrencyConfiguration(t *testing.T) {
 	indexEnvironment(t)
 	t.Setenv("EXTRACTOR_RECEIPT_CONCURRENCY", "")

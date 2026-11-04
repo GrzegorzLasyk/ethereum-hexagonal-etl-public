@@ -1,3 +1,6 @@
+// worker.go implements bounded application polling with cancellation, progress logging and worker
+// joining in the inbound adapter layer.
+
 // Package indexer schedules bounded application cycles. It owns no SQL or RPC.
 package indexer
 
@@ -16,6 +19,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
 
+// Worker owns bounded polling/concurrency policy around an injected application operation and its
+// logger/metrics.
 type Worker struct {
 	metrics       *metrics.Registry
 	usecase       inbound.Indexer
@@ -24,6 +29,8 @@ type Worker struct {
 	maxErrors     int
 }
 
+// New validates worker counts and polling/deadline policy before retaining the injected
+// application operation.
 func New(u inbound.Indexer, logger *slog.Logger, poll, timeout time.Duration, maxErrors int, registries ...*metrics.Registry) (*Worker, error) {
 	if u == nil || logger == nil || poll <= 0 || timeout <= 0 || maxErrors < 1 {
 		return nil, domain.ErrInvalidData
@@ -34,6 +41,9 @@ func New(u inbound.Indexer, logger *slog.Logger, poll, timeout time.Duration, ma
 	}
 	return &Worker{registry, u, logger, poll, timeout, maxErrors}, nil
 }
+
+// Run runs bounded indexing cycles until completion/cancellation or a terminal error
+// budget/recovery stop; it does not parallelize heights.
 func (w *Worker) Run(ctx context.Context) error {
 	failures := 0
 	for ctx.Err() == nil {
@@ -96,6 +106,8 @@ func (w *Worker) Run(ctx context.Context) error {
 	return nil
 }
 
+// writeProgress logs committed and failed block identities separately so earlier batch success
+// survives a later error.
 func writeProgress(ctx context.Context, logger *slog.Logger, result inbound.IndexResult, err error, started time.Time) {
 	operation := "index_block"
 	if result.Reindex {

@@ -1,5 +1,8 @@
 //go:build postgresintegration
 
+// handoff_seed_test.go exercises deterministic source setup for downstream real-process handoff in
+// the outbound adapter layer.
+
 package postgres
 
 import (
@@ -20,14 +23,20 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
 
+// fixedProvenanceSource wraps the block source with deterministic provenance for duplicate handoff
+// assertions.
 type fixedProvenanceSource struct{ outbound.BlockSource }
 
+// Block returns or fails a controlled complete source snapshot so acquisition/persistence
+// boundaries can be exercised.
 func (s fixedProvenanceSource) Block(c context.Context, n uint64) (domain.Extraction, error) {
 	e, err := s.BlockSource.Block(c, n)
 	e.ExtractedAt = time.Unix(100, 123).UTC()
 	return e, err
 }
 
+// TestSeedHandoff seeds the isolated handoff with production acquisition logic.
+//
 // Only the isolated Stage 9 runner invokes this seed through the real extraction
 // use case and PostgreSQL adapter. No other service imports Extractor internals.
 func TestSeedHandoff(t *testing.T) {

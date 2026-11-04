@@ -1,3 +1,6 @@
+// decode_test.go exercises strict source/document decoding into service-owned domain values in the
+// outbound adapter layer.
+
 package jsondocument_test
 
 import (
@@ -13,6 +16,7 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/domain"
 )
 
+// fixture loads committed deterministic source JSON used for offline decoder and transport tests.
 func fixture(t *testing.T) []byte {
 	t.Helper()
 	b, e := os.ReadFile("testdata/transformed_v1.json")
@@ -21,6 +25,9 @@ func fixture(t *testing.T) []byte {
 	}
 	return b
 }
+
+// TestTransformerV1Compatibility checks Loader can decode the normalized v1 representation emitted
+// by Transformer.
 func TestTransformerV1Compatibility(t *testing.T) {
 	b := fixture(t)
 	original := bytes.Clone(b)
@@ -45,6 +52,9 @@ func TestTransformerV1Compatibility(t *testing.T) {
 		t.Fatal("borrowed payload mutated")
 	}
 }
+
+// TestRejectedDocuments checks normalized version/shape/identity failures do not produce a usable
+// Loader document.
 func TestRejectedDocuments(t *testing.T) {
 	for _, tt := range []struct {
 		name string
@@ -105,6 +115,9 @@ func TestRejectedDocuments(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+// TestEmptyAndHistoricalDocuments checks explicit empty collections and historical receipt
+// representation without inventing modern fields.
 func TestEmptyAndHistoricalDocuments(t *testing.T) {
 	var doc map[string]json.RawMessage
 	if e := json.Unmarshal(fixture(t), &doc); e != nil {
@@ -156,6 +169,9 @@ func TestEmptyAndHistoricalDocuments(t *testing.T) {
 		t.Fatal("historical outcome lost")
 	}
 }
+
+// TestBlobAndAuthorizationFields checks modeled blob/authorization optional fields survive
+// document decoding without losing exact values.
 func TestBlobAndAuthorizationFields(t *testing.T) {
 	for _, kind := range []string{"3", "4"} {
 		t.Run(kind, func(t *testing.T) {

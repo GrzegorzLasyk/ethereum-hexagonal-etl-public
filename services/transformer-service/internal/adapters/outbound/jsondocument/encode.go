@@ -1,3 +1,6 @@
+// encode.go implements deterministic versioned normalized JSON encoding with provenance in the
+// outbound adapter layer.
+
 // Package jsondocument owns the normalized JSON v1 output DTOs.
 package jsondocument
 
@@ -12,14 +15,19 @@ import (
 	"time"
 )
 
+// Encoder produces bounded versioned normalized JSON with explicit source provenance.
 type Encoder struct{ MaxBytes int }
 
+// New validates the maximum encoded-document budget before constructing the encoder.
 func New(maxBytes int) (*Encoder, error) {
 	if maxBytes <= 0 || maxBytes > 64<<20 {
 		return nil, fmt.Errorf("invalid output byte limit")
 	}
 	return &Encoder{maxBytes}, nil
 }
+
+// Encode serializes a validated snapshot/provenance into deterministic versioned JSON and rejects
+// output above the configured bound.
 func (e *Encoder) Encode(ctx context.Context, s domain.Snapshot, p domain.Provenance) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -65,7 +73,11 @@ func (e *Encoder) Encode(ctx context.Context, s domain.Snapshot, p domain.Proven
 	return data, nil
 }
 
+// hexData encodes bytes as prefixed hex for JSON fields that preserve Ethereum data
+// representation.
 func hexData(b []byte) string { return "0x" + hex.EncodeToString(b) }
+
+// hashes encodes the ordered hash values without changing their source order.
 func hashes(v []domain.Hash) any {
 	r := make([]string, 0, len(v))
 	for _, h := range v {
@@ -73,6 +85,8 @@ func hashes(v []domain.Hash) any {
 	}
 	return r
 }
+
+// accesses encodes the ordered access-list values without changing their source order.
 func accesses(v []domain.Access) any {
 	r := make([]any, 0, len(v))
 	for _, a := range v {
@@ -80,6 +94,8 @@ func accesses(v []domain.Access) any {
 	}
 	return r
 }
+
+// authorizations encodes the ordered authorization values without changing their source order.
 func authorizations(v []domain.Authorization) any {
 	r := make([]any, 0, len(v))
 	for _, a := range v {
@@ -87,6 +103,9 @@ func authorizations(v []domain.Authorization) any {
 	}
 	return r
 }
+
+// put adds only supplied optional fields to the encoded document, retaining explicit null when
+// required.
 func put[T any](o map[string]any, key string, v domain.Optional[T], convert func(T) any) {
 	if !v.Present {
 		return
@@ -98,6 +117,8 @@ func put[T any](o map[string]any, key string, v domain.Optional[T], convert func
 	o[key] = convert(v.Value)
 }
 
+// blockObject builds the normalized block JSON projection with exact quantities and modeled
+// optional fields.
 func blockObject(v domain.Block) map[string]any {
 	o := map[string]any{}
 	o["number"] = strconv.FormatUint(v.Number, 10)
@@ -128,6 +149,8 @@ func blockObject(v domain.Block) map[string]any {
 	return o
 }
 
+// transactionObject builds the normalized transaction projection, preserving type-specific fields
+// and recipient nullability.
 func transactionObject(v domain.Transaction) map[string]any {
 	o := map[string]any{}
 	o["hash"] = hexData(v.Hash[:])
@@ -156,6 +179,8 @@ func transactionObject(v domain.Transaction) map[string]any {
 	return o
 }
 
+// receiptObject builds the normalized receipt projection, including historical roots, outcome and
+// ordered logs.
 func receiptObject(v domain.Receipt) map[string]any {
 	o := map[string]any{}
 	o["transaction_hash"] = hexData(v.TransactionHash[:])
@@ -177,6 +202,7 @@ func receiptObject(v domain.Receipt) map[string]any {
 	return o
 }
 
+// logObject builds a normalized log object with original identity, ordered topics and exact data.
 func logObject(v domain.Log) map[string]any {
 	o := map[string]any{}
 	o["block_hash"] = hexData(v.BlockHash[:])
@@ -192,6 +218,7 @@ func logObject(v domain.Log) map[string]any {
 	return o
 }
 
+// accessObject builds the normalized access-list entry without sorting or losing storage keys.
 func accessObject(v domain.Access) map[string]any {
 	o := map[string]any{}
 	o["address"] = hexData(v.Address[:])
@@ -199,6 +226,8 @@ func accessObject(v domain.Access) map[string]any {
 	return o
 }
 
+// authorizationObject builds a normalized authorization entry with exact chain and signature
+// values.
 func authorizationObject(v domain.Authorization) map[string]any {
 	o := map[string]any{}
 	o["chain_id"] = string(v.ChainID)

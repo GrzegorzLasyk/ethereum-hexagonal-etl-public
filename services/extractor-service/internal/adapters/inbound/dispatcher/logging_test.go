@@ -1,3 +1,6 @@
+// logging_test.go exercises event correlation and secret/error redaction on success and failure in
+// the inbound adapter layer.
+
 package dispatcher_test
 
 import (
@@ -15,6 +18,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/application/ports/outbound"
 )
 
+// TestCorrelatedProgressSurvivesCancellationAndErrors checks that a claimed event's
+// identity/attempt remains available in failure and shutdown logs.
 func TestCorrelatedProgressSurvivesCancellationAndErrors(t *testing.T) {
 	raw := "raw-block/v1/1/42/" + strings.Repeat("a", 64)
 	id, source := raw, ""
@@ -63,6 +68,9 @@ func TestCorrelatedProgressSurvivesCancellationAndErrors(t *testing.T) {
 		})
 	}
 }
+
+// TestClaimFailureDoesNotInventIdentity requires failure before a claim to omit event identity
+// rather than log a fabricated event.
 func TestClaimFailureDoesNotInventIdentity(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()

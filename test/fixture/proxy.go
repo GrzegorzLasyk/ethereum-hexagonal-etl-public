@@ -1,3 +1,6 @@
+// proxy.go implements local gRPC ACK-loss injection after actual downstream acceptance in the
+// offline test and diagnostic infrastructure.
+
 package fixture
 
 import (
@@ -10,6 +13,8 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+// RawProxy injects response loss after forwarding to the durable receiver.
+//
 // Proxies exist only in the fixture process. An injected error is returned only
 // AFTER a real receiver's durable ACK. They never persist or queue events.
 type RawProxy struct {
@@ -18,6 +23,8 @@ type RawProxy struct {
 	Client  etlv1.TransformerServiceClient
 }
 
+// SubmitRawBlock validates the raw transport envelope and delegates durable acceptance; only
+// explicit committed/already-accepted outcomes receive ACK.
 func (p *RawProxy) SubmitRawBlock(ctx context.Context, r *etlv1.SubmitRawBlockRequest) (*etlv1.SubmitRawBlockResponse, error) {
 	ack, err := p.Client.SubmitRawBlock(ctx, r)
 	if err != nil {
@@ -29,12 +36,16 @@ func (p *RawProxy) SubmitRawBlock(ctx context.Context, r *etlv1.SubmitRawBlockRe
 	return ack, nil
 }
 
+// TransformedProxy forwards transformed gRPC events and injects only the configured response loss
+// after acceptance.
 type TransformedProxy struct {
 	etlv1.UnimplementedLoaderServiceServer
 	Fixture *Server
 	Client  etlv1.LoaderServiceClient
 }
 
+// SubmitTransformedBlock validates normalized transport metadata and delegates durable Inbox
+// acceptance before returning ACK.
 func (p *TransformedProxy) SubmitTransformedBlock(ctx context.Context, r *etlv1.SubmitTransformedBlockRequest) (*etlv1.SubmitTransformedBlockResponse, error) {
 	ack, err := p.Client.SubmitTransformedBlock(ctx, r)
 	if err != nil {
@@ -45,6 +56,9 @@ func (p *TransformedProxy) SubmitTransformedBlock(ctx context.Context, r *etlv1.
 	}
 	return ack, nil
 }
+
+// accepted updates fixture ACK/fault counters only after the downstream call has actually accepted
+// the event.
 func (s *Server) accepted(id string, message proto.Message, raw, duplicate bool) bool {
 	encoded, err := (proto.MarshalOptions{Deterministic: true}).Marshal(message)
 	s.mu.Lock()

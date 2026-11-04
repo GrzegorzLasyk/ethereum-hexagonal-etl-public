@@ -1,3 +1,6 @@
+// execution.go implements live acquisition opt-in, finite range and request/time safety gates in
+// the startup configuration boundary.
+
 package config
 
 import (

@@ -1,3 +1,6 @@
+// server.go implements loopback HTTP routes and controlled local server lifecycle in the shared
+// technical support layer, outside service domains.
+
 // Package health provides optional local readiness for service composition roots.
 // It has no knowledge of service domains or downstream processing completion.
 package health

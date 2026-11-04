@@ -1,3 +1,6 @@
+// main.go implements command startup, explicit adapter wiring and bounded resource lifetime in the
+// local operator tooling.
+
 // Command mainnet owns a separate, retained local Compose environment.
 // Only explicit extract, e2e and reindex commands can start Ethereum acquisition.
 package main
@@ -23,8 +26,12 @@ import (
 	"time"
 )
 
+// composeFile selects the checked-in Compose definition; project identity and private credentials
+// are passed separately.
 const composeFile = "deployments/compose/mainnet.yaml"
 
+// defaults defines private operator configuration keys and conservative defaults; initialization
+// supplies credentials separately.
 var defaults = map[string]string{
 	"MAINNET_PROJECT": "", "POSTGRES_PASSWORD": "",
 	"MAINNET_VERIFY_TIMEOUT": "2m", "EXTRACTOR_DRAIN_TIMEOUT": "30s",
@@ -39,6 +46,8 @@ var defaults = map[string]string{
 	"EXTRACTOR_MAX_DATABASE_BYTES": "1073741824",
 }
 
+// main invokes the local tool entry point and reports a nonzero status on configuration or
+// execution failure.
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -48,6 +57,8 @@ func main() {
 	}
 }
 
+// start validates the private operator configuration and orchestrates only the selected bounded
+// Compose action through the command boundary.
 func start(ctx context.Context, args []string) error {
 	var recovery recoveryRequest
 	if len(args) > 0 && (args[0] == "repair" || args[0] == "replay" || args[0] == "reindex") {
@@ -69,6 +80,8 @@ func start(ctx context.Context, args []string) error {
 	return run(ctx, args[0], c, os.Environ(), execute, recovery)
 }
 
+// initialize creates a new private Mainnet configuration with generated credentials; existing
+// files are never overwritten.
 func initialize(path string) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
@@ -135,6 +148,8 @@ func readConfig(path string) (map[string]string, error) {
 	return c, nil
 }
 
+// validate requires isolated Mainnet project identity, owning credentials and explicit finite
+// acquisition bounds before operator execution.
 func validate(c map[string]string, acquisition bool) error {
 	if err := validatePerformance(c); err != nil {
 		return err
@@ -207,8 +222,12 @@ func environment(parent []string, c map[string]string) []string {
 	return env
 }
 
+// executor is the injectable child-command boundary used to test operator safety without starting
+// Docker or RPC.
 type executor func(context.Context, []string, []string) ([]byte, error)
 
+// run validates the private operator configuration and orchestrates only the selected bounded
+// Compose action through the command boundary.
 func run(ctx context.Context, action string, c map[string]string, parent []string, invoke executor, recovery ...recoveryRequest) error {
 	if action != "check" && action != "up" && action != "extract" && action != "stop" && action != "verify" && action != "e2e" && action != "drain" && action != "replay" && action != "repair" && action != "reindex" && action != "restart" {
 		return errors.New("unknown Mainnet command")
@@ -332,6 +351,8 @@ func run(ctx context.Context, action string, c map[string]string, parent []strin
 	return nil
 }
 
+// execute runs a bounded child command and returns its exit status through redacted, size-limited
+// output handling.
 func execute(ctx context.Context, args, env []string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Env, cmd.Stderr = env, io.Discard
@@ -346,6 +367,7 @@ func execute(ctx context.Context, args, env []string) ([]byte, error) {
 	return nil, cmd.Run()
 }
 
+// containsArg checks for a literal CLI argument when enforcing operator command safety gates.
 func containsArg(args []string, want string) bool {
 	for _, v := range args {
 		if v == want {

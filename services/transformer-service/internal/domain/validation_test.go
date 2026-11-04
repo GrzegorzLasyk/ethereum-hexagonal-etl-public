@@ -1,3 +1,6 @@
+// validation_test.go exercises pure value, membership and identity validation at the local
+// boundary in the pure domain layer.
+
 package domain
 
 import (
@@ -6,6 +9,8 @@ import (
 	"testing"
 )
 
+// validSnapshot builds internally consistent synthetic normalized records for pure domain
+// validation tests.
 func validSnapshot() Snapshot {
 	hash := Hash{1}
 	txhash := Hash{2}
@@ -14,6 +19,9 @@ func validSnapshot() Snapshot {
 		Transactions: []Transaction{{Hash: txhash, BlockHash: hash, BlockNumber: 1, From: Address{1}, To: null, Value: "0", R: "1", S: "2", V: Optional[Quantity]{Present: true, Value: "27"}, GasPrice: Optional[Quantity]{Present: true, Value: "1"}, Gas: 2, Input: []byte{}}},
 		Receipts:     []Receipt{{TransactionHash: txhash, BlockHash: hash, BlockNumber: 1, From: Address{1}, To: null, ContractAddress: null, Status: Optional[uint64]{Present: true, Value: 0}, GasUsed: 1, CumulativeGasUsed: 1, Logs: []Log{}}}}
 }
+
+// TestSnapshotValidation checks complete normalized membership and type/value invariants
+// independently of transport decoding.
 func TestSnapshotValidation(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -55,6 +63,9 @@ func TestSnapshotValidation(t *testing.T) {
 		})
 	}
 }
+
+// TestExactQuantities rejects noncanonical or lossy numeric representations while retaining
+// arbitrarily large exact decimal values.
 func TestExactQuantities(t *testing.T) {
 	for _, v := range []string{"0", "1", "115792089237316195423570985008687907853269984665640564039457584007913129639935"} {
 		if !Quantity(v).Valid() {
@@ -70,6 +81,9 @@ func TestExactQuantities(t *testing.T) {
 		t.Fatal("chain ID truncated")
 	}
 }
+
+// TestLogsAndDuplicateTransactions rejects inconsistent log positions and repeated transaction
+// identities in a complete normalized snapshot.
 func TestLogsAndDuplicateTransactions(t *testing.T) {
 	s := validSnapshot()
 	s.Transactions = append(s.Transactions, s.Transactions[0])

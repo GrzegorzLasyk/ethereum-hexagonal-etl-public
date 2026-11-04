@@ -1,3 +1,6 @@
+// admission_test.go exercises bounded receiver resources and reservation release in the shared
+// technical support layer, outside service domains.
+
 package metrics
 
 import (
@@ -8,6 +11,8 @@ import (
 	"testing"
 )
 
+// TestAdmissionMetricsAndFailedSnapshot keeps rejection/reservation evidence visible without
+// turning a failed DB snapshot into healthy queue zeros.
 func TestAdmissionMetricsAndFailedSnapshot(t *testing.T) {
 	r := New()
 	r.ConfigureAdmission(2, 100, 200)

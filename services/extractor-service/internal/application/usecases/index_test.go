@@ -1,3 +1,6 @@
+// index_test.go exercises ordered acquisition and bounded provider-relative branch reconciliation
+// in the application orchestration layer.
+
 package usecases_test
 
 import (
@@ -14,6 +17,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
 
+// branchFixture models provider ancestry, active membership and retained history separately for
+// indexing/reindex tests.
 type branchFixture struct {
 	blocks              map[uint64]domain.Extraction
 	active              map[uint64]domain.Header
@@ -29,9 +34,14 @@ type branchFixture struct {
 	replayCalls         int
 }
 
+// emptyExtraction builds a complete deterministic extraction for boundary tests; its
+// hashes/provenance are synthetic.
 func emptyExtraction(n uint64, hash, parent byte) domain.Extraction {
 	return domain.Extraction{Header: domain.Header{ID: domain.BlockID{ChainID: "1", Number: n, Hash: domain.Hash{hash}}, ParentHash: domain.Hash{parent}}, Transactions: []domain.Transaction{}, Receipts: []domain.Receipt{}, RawBlock: []byte(`{"transactions":[]}`), RawReceipts: [][]byte{}, Provider: "fixture", ExtractedAt: time.Unix(1, 0)}
 }
+
+// newBranch creates independent in-memory provider and retained-branch state for controlled
+// fork/cursor tests.
 func newBranch() *branchFixture {
 	b := &branchFixture{blocks: map[uint64]domain.Extraction{}, active: map[uint64]domain.Header{}, retained: map[string]domain.Extraction{}, head: 15}
 	for n := uint64(10); n <= 15; n++ {
@@ -39,10 +49,16 @@ func newBranch() *branchFixture {
 	}
 	return b
 }
+
+// ChainID returns the fake provider chain for explicit source-identity checks.
 func (b *branchFixture) ChainID(context.Context) (domain.ChainID, error) { return "1", nil }
+
+// Head returns the current fake provider tip; tests can move it without external RPC.
 func (b *branchFixture) Head(ctx context.Context) (domain.Header, error) {
 	return b.Header(ctx, b.head)
 }
+
+// Header returns the controlled provider ancestry at a height for deterministic reorg tests.
 func (b *branchFixture) Header(ctx context.Context, n uint64) (domain.Header, error) {
 	if err := ctx.Err(); err != nil {
 		return domain.Header{}, err
@@ -56,6 +72,9 @@ func (b *branchFixture) Header(ctx context.Context, n uint64) (domain.Header, er
 	}
 	return e.Header, nil
 }
+
+// Block returns or fails a controlled complete source snapshot so acquisition/persistence
+// boundaries can be exercised.
 func (b *branchFixture) Block(ctx context.Context, n uint64) (domain.Extraction, error) {
 	if err := ctx.Err(); err != nil {
 		return domain.Extraction{}, err
@@ -70,6 +89,8 @@ func (b *branchFixture) Block(ctx context.Context, n uint64) (domain.Extraction,
 	}
 	return e.Clone(), nil
 }
+
+// Checkpoint reads simulated durable progress for extraction/cursor assertions.
 func (b *branchFixture) Checkpoint(context.Context, domain.ChainID) (*domain.Checkpoint, error) {
 	if b.cp == nil {
 		return nil, nil
@@ -77,7 +98,13 @@ func (b *branchFixture) Checkpoint(context.Context, domain.ChainID) (*domain.Che
 	cp := *b.cp
 	return &cp, nil
 }
+
+// Capacity returns controlled admission watermarks to force acquisition pauses without filling a
+// real disk.
 func (b *branchFixture) Capacity(context.Context) (domain.Capacity, error) { return b.capacity, nil }
+
+// ActiveHeader reads retained fake branch membership separately from the currently reported
+// provider branch.
 func (b *branchFixture) ActiveHeader(_ context.Context, n uint64) (domain.Header, error) {
 	h, ok := b.active[n]
 	if !ok {
@@ -85,6 +112,9 @@ func (b *branchFixture) ActiveHeader(_ context.Context, n uint64) (domain.Header
 	}
 	return h, nil
 }
+
+// Commit simulates the application persistence boundary and records committed identity/progress
+// for assertions; it is not a production database.
 func (b *branchFixture) Commit(ctx context.Context, c outbound.CommitExtraction) (outbound.CommitResult, error) {
 	if err := ctx.Err(); err != nil {
 		return outbound.CommitResult{}, err
@@ -108,6 +138,9 @@ func (b *branchFixture) Commit(ctx context.Context, c outbound.CommitExtraction)
 	b.capacity.Events++
 	return outbound.CommitResult{}, nil
 }
+
+// Rewind models a revision-fenced active-branch change while retaining fake source history for
+// assertions.
 func (b *branchFixture) Rewind(_ context.Context, cp domain.Checkpoint, to domain.BlockID) error {
 	if b.cp == nil || *b.cp != cp {
 		return domain.ErrCheckpointConflict
@@ -121,9 +154,15 @@ func (b *branchFixture) Rewind(_ context.Context, cp domain.Checkpoint, to domai
 	b.cp = &domain.Checkpoint{Block: to, Revision: cp.Revision + 1, Start: cp.Start}
 	return nil
 }
+
+// opts provides a bounded default index range/capacity policy for deterministic use-case
+// scenarios.
 func opts() usecases.IndexOptions {
 	return usecases.IndexOptions{Chain: "1", Start: 10, RecoveryDepth: 4, Batch: 3, Limits: domain.CapacityLimits{Events: 100, Bytes: 100000, DatabaseBytes: 1000000}}
 }
+
+// index wires the real application use case to controlled test ports and fails immediately on
+// invalid setup.
 func index(t *testing.T, b *branchFixture, o usecases.IndexOptions) *usecases.Index {
 	t.Helper()
 	u, err := usecases.NewIndex(o, b, b, b)
@@ -132,6 +171,9 @@ func index(t *testing.T, b *branchFixture, o usecases.IndexOptions) *usecases.In
 	}
 	return u
 }
+
+// seed advances the controlled initial branch to the requested test height before injecting
+// changes.
 func seed(t *testing.T, b *branchFixture, end uint64) {
 	t.Helper()
 	o := opts()
@@ -147,6 +189,9 @@ func seed(t *testing.T, b *branchFixture, end uint64) {
 		}
 	}
 }
+
+// fork replaces only the fake provider's branch suffix, leaving retained local history available
+// for recovery assertions.
 func fork(b *branchFixture, from uint64) {
 	for n := from; n <= b.head; n++ {
 		parent := byte(n + 99)
@@ -157,6 +202,8 @@ func fork(b *branchFixture, from uint64) {
 	}
 }
 
+// TestIndexRangeRestartAndConfirmations checks inclusive finite ranges, checkpoint resumption and
+// confirmation eligibility.
 func TestIndexRangeRestartAndConfirmations(t *testing.T) {
 	b := newBranch()
 	o := opts()
@@ -183,6 +230,9 @@ func TestIndexRangeRestartAndConfirmations(t *testing.T) {
 		t.Fatal(b.fetched)
 	}
 }
+
+// TestIndexFollowHeadAndCapacity checks waiting for eligible head data and capacity without
+// skipping sequential heights.
 func TestIndexFollowHeadAndCapacity(t *testing.T) {
 	b := newBranch()
 	b.head = 10
@@ -214,6 +264,9 @@ func TestIndexFollowHeadAndCapacity(t *testing.T) {
 		t.Fatalf("resume %+v %v", r, e)
 	}
 }
+
+// TestIndexShallowReorgAndRetainedHistory walks a provable retained ancestor, rewinds active
+// membership and preserves old source/event history.
 func TestIndexShallowReorgAndRetainedHistory(t *testing.T) {
 	b := newBranch()
 	seed(t, b, 13)
@@ -240,6 +293,9 @@ func TestIndexShallowReorgAndRetainedHistory(t *testing.T) {
 		t.Fatalf("retained %d", len(b.retained))
 	}
 }
+
+// TestIndexStopsWithoutProvenAncestor requires a safe halt when depth, retained ancestry or
+// provider evidence cannot justify recovery.
 func TestIndexStopsWithoutProvenAncestor(t *testing.T) {
 	for _, name := range []string{"deep", "start anchor", "missing local", "missing provider", "broken parents", "regressed head", "moving tip"} {
 		t.Run(name, func(t *testing.T) {
@@ -287,6 +343,9 @@ func TestIndexStopsWithoutProvenAncestor(t *testing.T) {
 		})
 	}
 }
+
+// TestIndexFailuresDoNotAdvance injects source/persistence failures and checks they do not move
+// the durable checkpoint.
 func TestIndexFailuresDoNotAdvance(t *testing.T) {
 	for _, name := range []string{"RPC", "missing", "partial", "commit", "moving block", "cancelled"} {
 		t.Run(name, func(t *testing.T) {
@@ -323,6 +382,9 @@ func TestIndexFailuresDoNotAdvance(t *testing.T) {
 		})
 	}
 }
+
+// TestIndexUint64BoundaryAndDepthUnderflow checks height/depth arithmetic cannot wrap into a
+// fabricated eligible range.
 func TestIndexUint64BoundaryAndDepthUnderflow(t *testing.T) {
 	b := newBranch()
 	b.head = math.MaxUint64
@@ -346,6 +408,9 @@ func TestIndexUint64BoundaryAndDepthUnderflow(t *testing.T) {
 		t.Fatalf("underflow %+v %v", r, e)
 	}
 }
+
+// OpenReindex creates/resumes the fake historical operation independently of the active
+// checkpoint.
 func (b *branchFixture) OpenReindex(_ context.Context, r outbound.ReindexRequest) (outbound.ReindexState, error) {
 	if b.job.Request.ID == "" {
 		b.job.Request = r
@@ -355,6 +420,9 @@ func (b *branchFixture) OpenReindex(_ context.Context, r outbound.ReindexRequest
 	}
 	return b.job, nil
 }
+
+// CommitReindex updates only the fake historical cursor and retained observation for isolation
+// assertions.
 func (b *branchFixture) CommitReindex(_ context.Context, s outbound.ReindexState, e domain.Extraction, _ domain.CapacityLimits) error {
 	if b.commitErr != nil {
 		return b.commitErr
@@ -369,10 +437,15 @@ func (b *branchFixture) CommitReindex(_ context.Context, s outbound.ReindexState
 	}
 	return nil
 }
+
+// Replay records the requested original-event retry operation in the fake store.
 func (b *branchFixture) Replay(_ context.Context, r outbound.ReplayRequest) error {
 	b.replayCalls++
 	return b.commitErr
 }
+
+// TestReindexRestartsWithoutChangingLiveCursor resumes historical work through its own cursor and
+// checks the active checkpoint is untouched.
 func TestReindexRestartsWithoutChangingLiveCursor(t *testing.T) {
 	b := newBranch()
 	seed(t, b, 13)
@@ -415,6 +488,8 @@ func TestReindexRestartsWithoutChangingLiveCursor(t *testing.T) {
 	}
 }
 
+// TestIndexRejectsSameIdentityWithChangedParent treats inconsistent parent data under the same
+// block identity as unstable source evidence.
 func TestIndexRejectsSameIdentityWithChangedParent(t *testing.T) {
 	b := newBranch()
 	seed(t, b, 13)
@@ -427,6 +502,8 @@ func TestIndexRejectsSameIdentityWithChangedParent(t *testing.T) {
 	}
 }
 
+// TestIndexProgressPreservesBatchAndFailedIdentity requires both completed batch members and the
+// failing identity to remain inspectable.
 func TestIndexProgressPreservesBatchAndFailedIdentity(t *testing.T) {
 	b := newBranch()
 	o := opts()
@@ -447,6 +524,8 @@ func TestIndexProgressPreservesBatchAndFailedIdentity(t *testing.T) {
 	}
 }
 
+// TestFailedBatchRetainsEarlierCommittedIdentity requires progress reporting to retain earlier
+// successful block identities after a later cycle failure.
 func TestFailedBatchRetainsEarlierCommittedIdentity(t *testing.T) {
 	b := newBranch()
 	e := b.blocks[11]
@@ -458,6 +537,8 @@ func TestFailedBatchRetainsEarlierCommittedIdentity(t *testing.T) {
 	}
 }
 
+// TestReindexAmbiguousCommitKeepsIdentity requires the independent operation identity to remain
+// available when the historical commit outcome is uncertain.
 func TestReindexAmbiguousCommitKeepsIdentity(t *testing.T) {
 	b := newBranch()
 	b.commitErr = outbound.ErrCommitUnknown
@@ -474,12 +555,16 @@ func TestReindexAmbiguousCommitKeepsIdentity(t *testing.T) {
 	}
 }
 
+// activeReadFailure injects a retained-ancestry read error at a selected call rather than
+// pretending the ancestor is absent.
 type activeReadFailure struct {
 	*branchFixture
 	calls, failAt int
 	err           error
 }
 
+// ActiveHeader injects storage read failure rather than absence, checking recovery does not invent
+// missing ancestry.
 func (s *activeReadFailure) ActiveHeader(ctx context.Context, n uint64) (domain.Header, error) {
 	s.calls++
 	if s.calls == s.failAt {
@@ -488,6 +573,8 @@ func (s *activeReadFailure) ActiveHeader(ctx context.Context, n uint64) (domain.
 	return s.branchFixture.ActiveHeader(ctx, n)
 }
 
+// TestActiveReadFailureDoesNotInventMissingAncestry distinguishes a storage outage from proven
+// absence of retained ancestry before recovery decisions.
 func TestActiveReadFailureDoesNotInventMissingAncestry(t *testing.T) {
 	for _, recovery := range []bool{false, true} {
 		for _, cause := range []error{errors.New("database offline"), context.Canceled, context.DeadlineExceeded, domain.ErrUnavailable} {
@@ -528,6 +615,7 @@ type exhaustedObserver struct {
 	err   error
 }
 
+// Header injects request-budget exhaustion while preserving the already committed test branch.
 func (b *exhaustedObserver) Header(ctx context.Context, n uint64) (domain.Header, error) {
 	b.calls++
 	if b.calls == 2 {
@@ -535,6 +623,9 @@ func (b *exhaustedObserver) Header(ctx context.Context, n uint64) (domain.Header
 	}
 	return b.branchFixture.Header(ctx, n)
 }
+
+// TestExecutionBudgetPreservesDurableProgress exhausts source execution limits after progress and
+// checks the last committed cursor/history remain intact.
 func TestExecutionBudgetPreservesDurableProgress(t *testing.T) {
 	for _, failure := range []error{outbound.ErrRPCBudgetExceeded, context.DeadlineExceeded} {
 		for _, recovery := range []bool{false, true} {

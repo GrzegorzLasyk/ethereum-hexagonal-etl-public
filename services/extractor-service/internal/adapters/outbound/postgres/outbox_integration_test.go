@@ -1,5 +1,8 @@
 //go:build postgresintegration
 
+// outbox_integration_test.go exercises real Outbox leases, retry limits and ambiguous-commit
+// recovery in the outbound adapter layer.
+
 package postgres
 
 import (
@@ -16,11 +19,14 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// deliveryFaultDB wraps transactions to inject Outbox delivery-commit acknowledgement failures.
 type deliveryFaultDB struct {
 	database
 	after bool
 }
 
+// BeginTx wraps or returns the controlled test transaction so commit/failure boundaries can be
+// injected without changing production code.
 func (d deliveryFaultDB) BeginTx(c context.Context, o pgx.TxOptions) (pgx.Tx, error) {
 	tx, e := d.database.BeginTx(c, o)
 	if e != nil {
@@ -29,11 +35,15 @@ func (d deliveryFaultDB) BeginTx(c context.Context, o pgx.TxOptions) (pgx.Tx, er
 	return deliveryFaultTx{tx, d.after}, nil
 }
 
+// deliveryFaultTx can lose the acknowledgement of a real delivery commit to test safe retry
+// decisions.
 type deliveryFaultTx struct {
 	pgx.Tx
 	after bool
 }
 
+// Commit injects a controlled lost/failed commit acknowledgement around the real transaction to
+// test explicit outcome uncertainty.
 func (tx deliveryFaultTx) Commit(c context.Context) error {
 	if tx.after {
 		if e := tx.Tx.Commit(c); e != nil {
@@ -42,6 +52,9 @@ func (tx deliveryFaultTx) Commit(c context.Context) error {
 	}
 	return errors.New("lost local commit response")
 }
+
+// testOutbox exercises real delivery claims, retry exhaustion, fencing and ambiguous-commit
+// recovery without a live provider.
 func testOutbox(t *testing.T, runtime, owner *pgxpool.Pool) {
 	ctx := t.Context()
 	exec := func(q string, args ...any) {

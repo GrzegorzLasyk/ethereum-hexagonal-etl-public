@@ -1,3 +1,6 @@
+// check.go implements bounded read-only schema/migration/privilege checks for readiness in the
+// shared technical support layer, outside service domains.
+
 // Package dbreadiness checks a service-owned PostgreSQL contract without writes.
 // Policies are adapter-owned technical manifests, not shared domain models.
 package dbreadiness
@@ -9,17 +12,27 @@ import (
 	"time"
 )
 
+// ErrNotReady signals service database is not ready. Callers can match this category with
+// errors.Is without parsing error text.
 var ErrNotReady = errors.New("service database is not ready")
 
+// Database is the minimal transaction-opening dependency needed by owning-schema readiness checks.
 type Database interface {
+	// BeginTx starts an adapter-owned database transaction with the supplied options; the caller owns
+	// completion/rollback.
 	BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error)
 }
+
+// Table describes one required owning-schema relation and its expected runtime privileges.
 type Table struct {
 	Name                    string
 	Columns, Types, Updates []string
 	Insert, Delete          bool
 	View                    bool
 }
+
+// Policy declares required owning-schema objects, migrations and privileges for readiness rather
+// than mutating the schema.
 type Policy struct {
 	Schema     string
 	Tables     []Table
@@ -49,6 +62,9 @@ func Check(ctx context.Context, db Database, p Policy) error {
 	}
 	return nil
 }
+
+// check checks required relations, metadata and privilege grants within the read-only transaction;
+// failure remains a safe not-ready result.
 func check(ctx context.Context, tx pgx.Tx, p Policy) error {
 	var valid bool
 	err := tx.QueryRow(ctx, `SELECT current_database()='ethereum_etl' AND current_user=$1 AND session_user=$1
@@ -122,6 +138,9 @@ func check(ctx context.Context, tx pgx.Tx, p Policy) error {
 	}
 	return nil
 }
+
+// nonNil normalizes a nil slice to an empty SQL-array argument so readiness membership checks have
+// defined semantics.
 func nonNil(values []string) []string {
 	if values == nil {
 		return []string{}

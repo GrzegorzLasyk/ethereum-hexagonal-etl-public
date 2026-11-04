@@ -1,5 +1,8 @@
 //go:build postgresintegration && perfbaseline
 
+// performance_seed_test.go exercises bounded synthetic/authentic offline source setup for
+// measurements in the outbound adapter layer.
+
 package postgres
 
 import (
@@ -25,8 +28,12 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// offlineRoundTripper adapts captured or synthetic responses to HTTP transport without a network
+// fallback.
 type offlineRoundTripper func(*http.Request) (*http.Response, error)
 
+// RoundTrip implements the test HTTP transport with controlled responses/failures; it never
+// selects a live Ethereum endpoint.
 func (f offlineRoundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 // No socket, default HTTP transport, endpoint configuration or network fallback.
@@ -84,6 +91,9 @@ func syntheticSource(t *testing.T, start uint64, count int) outbound.BlockSource
 	}
 	return fixedProvenanceSource{c}
 }
+
+// TestSeedPerformance acquires the selected bounded offline dataset into Extractor storage and
+// writes correlated timing evidence.
 func TestSeedPerformance(t *testing.T) {
 	s, err := performance.ReadScenario()
 	if err != nil || os.Getenv("HANDOFF_TEST_ISOLATED") != "1" {
@@ -194,6 +204,8 @@ func TestSeedPerformance(t *testing.T) {
 	}
 }
 
+// TestSyntheticBaselineOfflineSource checks deterministic contiguous synthetic acquisition uses
+// only the local replay transport.
 func TestSyntheticBaselineOfflineSource(t *testing.T) {
 	source := syntheticSource(t, 100, 3)
 	chain, err := source.ChainID(t.Context())

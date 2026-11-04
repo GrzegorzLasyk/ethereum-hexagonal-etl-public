@@ -1,3 +1,6 @@
+// main_test.go exercises command startup, explicit adapter wiring and bounded resource lifetime in
+// the offline test and diagnostic infrastructure.
+
 package main
 
 import (
@@ -9,6 +12,8 @@ import (
 	"testing"
 )
 
+// argAfter returns a required child-command argument for assertions and fails if the expected flag
+// is absent.
 func argAfter(t *testing.T, args []string, key string) string {
 	t.Helper()
 	for i, arg := range args {
@@ -20,6 +25,8 @@ func argAfter(t *testing.T, args []string, key string) string {
 	return ""
 }
 
+// TestLifecycle inspects isolated runner command order, bounded startup and owned-resource cleanup
+// with fake executors.
 func TestLifecycle(t *testing.T) {
 	phases := []string{"validate Compose", "build fixture images", "start PostgreSQL", "verify migrations and permissions", "start complete fixture", "full Compose fixture E2E", "cleanup"}
 	for _, failAt := range append([]string{""}, phases...) {
@@ -133,6 +140,8 @@ func TestLifecycle(t *testing.T) {
 	}
 }
 
+// TestCancellationAndCleanupError checks bounded runner cancellation and surfaces owned-resource
+// cleanup failure rather than reporting a false PASS.
 func TestCancellationAndCleanupError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -157,6 +166,8 @@ func TestCancellationAndCleanupError(t *testing.T) {
 	}
 }
 
+// TestUniqueProjects requires generated test project identities to differ so concurrent runs
+// cannot share database storage.
 func TestUniqueProjects(t *testing.T) {
 	projects := map[string]bool{}
 	for range 2 {
@@ -174,6 +185,8 @@ func TestUniqueProjects(t *testing.T) {
 	}
 }
 
+// TestOutputRedactionAndBounds checks generated credentials and excessive child output cannot
+// escape runner diagnostic limits.
 func TestOutputRedactionAndBounds(t *testing.T) {
 	var b outputBuffer
 	for _, chunk := range []string{"before private-", "secret after"} {
@@ -195,6 +208,8 @@ func TestOutputRedactionAndBounds(t *testing.T) {
 	}
 }
 
+// TestPreserveToolSettings checks runner environment filtering removes application/database
+// overrides but retains necessary toolchain/Docker settings.
 func TestPreserveToolSettings(t *testing.T) {
 	want := []string{"PATH=/bin", "GOCACHE=/cache", "GOMODCACHE=/modules", "DOCKER_HOST=local"}
 	if got := isolatedEnvironment(want); !reflect.DeepEqual(got, want) {
@@ -202,6 +217,8 @@ func TestPreserveToolSettings(t *testing.T) {
 	}
 }
 
+// TestInitializeDoesNotOverwrite checks new private configuration creation and refusal to replace
+// an existing file.
 func TestInitializeDoesNotOverwrite(t *testing.T) {
 	path := t.TempDir() + "/.env.fixture"
 	if err := initialize(path); err != nil {
@@ -224,6 +241,8 @@ func TestInitializeDoesNotOverwrite(t *testing.T) {
 	}
 }
 
+// TestRetainResources checks retention preserves runner-owned evidence.
+//
 // Retain mode must preserve the private configuration and never request volume deletion.
 func TestRetainResources(t *testing.T) {
 	var filename string

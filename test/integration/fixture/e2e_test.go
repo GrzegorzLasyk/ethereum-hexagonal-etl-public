@@ -1,5 +1,10 @@
 //go:build composeintegration
 
+// e2e_test.go exercises full local synthetic pipeline outages, retries, reorg and recovery in the
+// offline test and diagnostic infrastructure.
+
+// Package fixture_test provides full local synthetic pipeline outages, retries, reorg and recovery
+// in the offline test and diagnostic infrastructure.
 package fixture_test
 
 import (
@@ -32,6 +37,8 @@ type system struct {
 	ex, tr, lo *pgxpool.Pool
 }
 
+// command runs a bounded command in the disposable fixture project, keeping environment details
+// out of failure output.
 func (s *system) command(args ...string) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(s.t.Context(), 90*time.Second)
 	defer cancel()
@@ -49,6 +56,9 @@ func (s *system) command(args ...string) ([]byte, error) {
 	c.WaitDelay = 5 * time.Second
 	return c.CombinedOutput()
 }
+
+// compose invokes the existing fixture Compose definition for the current isolated project and
+// fails on command error.
 func (s *system) compose(args ...string) []byte {
 	s.t.Helper()
 	out, err := s.command(args...)
@@ -57,6 +67,9 @@ func (s *system) compose(args ...string) []byte {
 	}
 	return out
 }
+
+// until polls a scenario assertion within its deadline and fails explicitly instead of silently
+// skipping unavailable work.
 func (s *system) until(label string, check func() bool) {
 	s.t.Helper()
 	ctx, cancel := context.WithTimeout(s.t.Context(), 45*time.Second)
@@ -75,18 +88,26 @@ func (s *system) until(label string, check func() bool) {
 		}
 	}
 }
+
+// is reads an integer PostgreSQL assertion and compares it with the expected count during bounded
+// polling.
 func (s *system) is(p *pgxpool.Pool, q string, want int) bool {
 	ctx, cancel := context.WithTimeout(s.t.Context(), 2*time.Second)
 	defer cancel()
 	var n int
 	return p.QueryRow(ctx, q).Scan(&n) == nil && n == want
 }
+
+// require requires an owning-schema query to match the expected durable state; query failure
+// cannot count as success.
 func (s *system) require(p *pgxpool.Pool, q string, want int) {
 	s.t.Helper()
 	if !s.is(p, q, want) {
 		s.t.Fatalf("assertion failed (expected %d): %s", want, q)
 	}
 }
+
+// control sends a local synthetic RPC/fault-control update; no real Ethereum node is involved.
 func (s *system) control(body string) {
 	s.t.Helper()
 	req, err := http.NewRequestWithContext(s.t.Context(), "POST", s.url+"/control", strings.NewReader(body))
@@ -102,6 +123,8 @@ func (s *system) control(body string) {
 		s.t.Fatal("fixture control rejected")
 	}
 }
+
+// state reads local fixture control/ACK counters for scenario assertions.
 func (s *system) state() fixture.State {
 	s.t.Helper()
 	req, _ := http.NewRequestWithContext(s.t.Context(), "GET", s.url+"/control", nil)
@@ -116,13 +139,20 @@ func (s *system) state() fixture.State {
 	}
 	return state
 }
+
+// drained requires all participating durable queues to reach the expected completed/delivered
+// count.
 func (s *system) drained(n int) bool {
 	return s.is(s.ex, "SELECT count(*) FROM extractor.outbox_events WHERE status='delivered'", n) && s.is(s.tr, "SELECT count(*) FROM transformer.inbox_events WHERE status='completed'", n) && s.is(s.tr, "SELECT count(*) FROM transformer.outbox_events WHERE status='delivered'", n) && s.is(s.lo, "SELECT count(*) FROM loader.inbox_events WHERE status='completed'", n) && s.is(s.lo, "SELECT count(*) FROM loader.blocks", n)
 }
+
+// probe queries a local service health route for the disposable fixture environment.
 func (s *system) probe(port int, path string) bool {
 	_, err := s.command("exec", "-T", "fixture", "/app/probe", fmt.Sprintf("http://127.0.0.1:%d/%s", port, path))
 	return err == nil
 }
+
+// stop stops the selected test-owned services/processes without deleting unrelated storage.
 func (s *system) stop(services ...string) {
 	s.compose(append([]string{"stop", "-t", "20"}, services...)...)
 	for _, name := range services {
@@ -135,6 +165,9 @@ func (s *system) stop(services ...string) {
 		}
 	}
 }
+
+// pool opens an explicitly configured owning-role test pool with test cleanup; it is never a
+// cross-service runtime dependency.
 func pool(t *testing.T, service string) *pgxpool.Pool {
 	t.Helper()
 	cfg, err := pgxpool.ParseConfig(os.Getenv(strings.ToUpper(service) + "_TEST_DATABASE_URL"))
@@ -156,6 +189,9 @@ func pool(t *testing.T, service string) *pgxpool.Pool {
 	}
 	return p
 }
+
+// TestFixtureE2E runs the isolated real-service synthetic pipeline through outages, lost ACKs,
+// restarts, replay and reorg assertions.
 func TestFixtureE2E(t *testing.T) {
 	if os.Getenv("FIXTURE_E2E_ISOLATED") != "1" {
 		t.Skip("run go run ./test/integration/cmd/fixture-e2e")
@@ -335,6 +371,8 @@ func (s *system) history() map[string][32]byte {
 	return result
 }
 
+// verifyRecords compares normalized records and retained branch observations after the full
+// synthetic scenario.
 func (s *system) verifyRecords() {
 	s.t.Helper()
 	for _, q := range []string{"SELECT count(*) FROM extractor.raw_blocks", "SELECT count(*) FROM extractor.outbox_events"} {
@@ -472,6 +510,7 @@ func (s *system) verifyCorrelation(history map[string][32]byte) {
 	s.t.Log("PASS: structured correlation across both hops, retries, duplicate ACK, replay and reorg")
 }
 
+// metrics reads and parses a local service metrics body for fixture assertions.
 func (s *system) metrics(port int) map[string]float64 {
 	s.t.Helper()
 	body := s.compose("exec", "-T", "fixture", "/app/probe", "--body", fmt.Sprintf("http://127.0.0.1:%d/metrics", port))

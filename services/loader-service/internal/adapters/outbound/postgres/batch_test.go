@@ -1,3 +1,6 @@
+// batch_test.go exercises bounded pgx INSERT grouping and batch-result cleanup inside a block
+// transaction in the outbound adapter layer.
+
 package postgres
 
 import (
@@ -18,10 +21,15 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+// recordedStatement retains one parameterized SQL operation and its arguments for field-
+// equivalence assertions.
 type recordedStatement struct {
 	sql  string
 	args []any
 }
+
+// recordingExecutor captures direct statements and batches and injects result/close failures
+// without PostgreSQL.
 type recordingExecutor struct {
 	statements            []recordedStatement
 	batches               []int
@@ -30,11 +38,16 @@ type recordingExecutor struct {
 	failure, closeError   error
 }
 
+// Exec records a test SQL execution or returns the configured statement failure for batch-
+// order/rollback assertions.
 func (r *recordingExecutor) Exec(_ context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
 	r.direct++
 	r.statements = append(r.statements, recordedStatement{sql, args})
 	return pgconn.NewCommandTag("INSERT 0 1"), nil
 }
+
+// SendBatch exposes queued pgx statements through controlled result objects so batching and late
+// failures are observable.
 func (r *recordingExecutor) SendBatch(_ context.Context, b *pgx.Batch) pgx.BatchResults {
 	r.batches = append(r.batches, b.Len())
 	for _, q := range b.QueuedQueries {
@@ -43,11 +56,14 @@ func (r *recordingExecutor) SendBatch(_ context.Context, b *pgx.Batch) pgx.Batch
 	return &recordingResults{r: r}
 }
 
+// recordingResults implements batch result consumption against the recording executor.
 type recordingResults struct {
 	pgx.BatchResults
 	r *recordingExecutor
 }
 
+// Exec records a test SQL execution or returns the configured statement failure for batch-
+// order/rollback assertions.
 func (r *recordingResults) Exec() (pgconn.CommandTag, error) {
 	r.r.reads++
 	if r.r.reads == r.r.failureAt {
@@ -55,6 +71,9 @@ func (r *recordingResults) Exec() (pgconn.CommandTag, error) {
 	}
 	return pgconn.NewCommandTag("INSERT 0 1"), nil
 }
+
+// Close implements test-owned cleanup and records/releases the controlled resource when
+// applicable.
 func (r *recordingResults) Close() error { r.r.closes++; return r.r.closeError }
 
 // Synthetic workload with the same row counts as authentic block 12965000.
@@ -104,6 +123,9 @@ func largeBatchPayload(t *testing.T, count int) []byte {
 	}
 	return raw
 }
+
+// writeTestSnapshot runs the real normalized INSERT mappings against a recording executor for
+// direct/batched equivalence checks.
 func writeTestSnapshot(t *testing.T, executor recordExecutor, s domain.Snapshot) {
 	t.Helper()
 	ctx := t.Context()
@@ -124,6 +146,9 @@ func writeTestSnapshot(t *testing.T, executor recordExecutor, s domain.Snapshot)
 		}
 	}
 }
+
+// TestRecordBatchPreservesAllSQLValuesAndOrder compares direct and batched INSERT arguments/order
+// so batching cannot change normalized records.
 func TestRecordBatchPreservesAllSQLValuesAndOrder(t *testing.T) {
 	for _, count := range []int{0, 1, 259} {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
@@ -161,6 +186,9 @@ func TestRecordBatchPreservesAllSQLValuesAndOrder(t *testing.T) {
 		})
 	}
 }
+
+// TestRecordBatchByteAndParameterBounds checks coalescing estimates, single-row handling and per-
+// statement parameter limits without dropping values.
 func TestRecordBatchByteAndParameterBounds(t *testing.T) {
 	r := &recordingExecutor{}
 	b := &recordBatch{tx: r, limit: 64}
@@ -194,6 +222,9 @@ func TestRecordBatchByteAndParameterBounds(t *testing.T) {
 		t.Fatal("unknown encoding size accepted")
 	}
 }
+
+// TestRecordBatchErrorsAndCancellation checks result closing and first-error preservation on batch
+// failure or canceled work.
 func TestRecordBatchErrorsAndCancellation(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -241,8 +272,12 @@ func TestRecordBatchErrorsAndCancellation(t *testing.T) {
 // PostgreSQL atomicity itself is verified by the tagged integration companion.
 type batchFailureDB struct{ tx *batchFailureTx }
 
+// BeginTx wraps or returns the controlled test transaction so commit/failure boundaries can be
+// injected without changing production code.
 func (d batchFailureDB) BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error) { return d.tx, nil }
 
+// batchFailureTx records commit/rollback and control statements around a simulated late batch
+// failure.
 type batchFailureTx struct {
 	pgx.Tx
 	recordingExecutor
@@ -250,25 +285,41 @@ type batchFailureTx struct {
 	controlCalls          int
 }
 
+// Exec records a test SQL execution or returns the configured statement failure for batch-
+// order/rollback assertions.
 func (tx *batchFailureTx) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
 	tx.controlCalls++
 	return pgconn.CommandTag{}, nil
 }
+
+// SendBatch exposes queued pgx statements through controlled result objects so batching and late
+// failures are observable.
 func (tx *batchFailureTx) SendBatch(ctx context.Context, b *pgx.Batch) pgx.BatchResults {
 	return tx.recordingExecutor.SendBatch(ctx, b)
 }
-func (tx *batchFailureTx) QueryRow(context.Context, string, ...any) pgx.Row { return claimedRow{} }
-func (tx *batchFailureTx) Rollback(context.Context) error                   { tx.rolledBack = true; return nil }
-func (tx *batchFailureTx) Commit(context.Context) error                     { tx.committed = true; return nil }
 
+// QueryRow returns the controlled claimed-row state used by the completion fence test.
+func (tx *batchFailureTx) QueryRow(context.Context, string, ...any) pgx.Row { return claimedRow{} }
+
+// Rollback records rollback of the simulated transaction after failure for atomicity assertions.
+func (tx *batchFailureTx) Rollback(context.Context) error { tx.rolledBack = true; return nil }
+
+// Commit records whether the simulated completion tried to commit after an injected batch failure.
+func (tx *batchFailureTx) Commit(context.Context) error { tx.committed = true; return nil }
+
+// claimedRow supplies a valid claimed Inbox row for transaction-boundary unit tests.
 type claimedRow struct{}
 
+// Scan populates controlled test row fields for the claimed attempt/state check.
 func (claimedRow) Scan(v ...any) error {
 	*v[0].(*string) = "processing"
 	*v[1].(*int) = 1
 	*v[2].(*bool) = true
 	return nil
 }
+
+// TestCompleteRollsBackAfterEarlierSuccessfulBatch injects a later SQL failure and requires whole-
+// block rollback despite earlier successful batch statements.
 func TestCompleteRollsBackAfterEarlierSuccessfulBatch(t *testing.T) {
 	raw := largeBatchPayload(t, 259)
 	d, err := (jsondocument.Decoder{}).Decode(t.Context(), raw)
@@ -288,6 +339,9 @@ func TestCompleteRollsBackAfterEarlierSuccessfulBatch(t *testing.T) {
 		t.Fatal("failure was not fenced and rolled back", err, tx)
 	}
 }
+
+// TestRecordBatchTransactionsWithoutLogs checks receipt persistence with no logs and correct
+// flushing of sparse block contents.
 func TestRecordBatchTransactionsWithoutLogs(t *testing.T) {
 	var payload map[string]any
 	_ = json.Unmarshal(largeBatchPayload(t, 259), &payload)

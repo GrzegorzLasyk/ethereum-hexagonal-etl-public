@@ -1,3 +1,6 @@
+// receipts_test.go exercises bounded concurrent receipt fetching with indexed results and joined
+// cancellation in the outbound adapter layer.
+
 package jsonrpc
 
 import (
@@ -59,8 +62,12 @@ func receiptBatch(t *testing.T, n int) ([]byte, [][]byte) {
 	return block, out
 }
 
+// receiptHook controls a receipt response, HTTP status and retry header at a chosen transaction
+// index.
 type receiptHook func(context.Context, int) ([]byte, int, string, error)
 
+// offlineReceiptClient injects an in-memory receipt transport/hook into the real client to control
+// completion order without external RPC.
 func offlineReceiptClient(t *testing.T, cfg Config, block []byte, receipts [][]byte, hook receiptHook) *Client {
 	t.Helper()
 	client, e := New(cfg, &http.Client{Transport: budgetTransport(func(r *http.Request) (*http.Response, error) {
@@ -108,6 +115,9 @@ func offlineReceiptClient(t *testing.T, cfg Config, block []byte, receipts [][]b
 	}
 	return client
 }
+
+// TestConcurrentReceiptOrderingAndRawBytes forces out-of-order completion and compares
+// transaction-indexed receipts and exact raw bytes.
 func TestConcurrentReceiptOrderingAndRawBytes(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		block, receipts := receiptBatch(t, 12)
@@ -151,6 +161,9 @@ func TestConcurrentReceiptOrderingAndRawBytes(t *testing.T) {
 		}
 	})
 }
+
+// TestConcurrentReceiptSharedBudget requires competing receipt workers to share the actual HTTP-
+// attempt limit.
 func TestConcurrentReceiptSharedBudget(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		block, receipts := receiptBatch(t, 24)
@@ -168,6 +181,9 @@ func TestConcurrentReceiptSharedBudget(t *testing.T) {
 		}
 	})
 }
+
+// TestConcurrentReceiptCancellationJoinsWorkers holds workers in flight, injects
+// failure/cancellation and verifies the batch joins before returning.
 func TestConcurrentReceiptCancellationJoinsWorkers(t *testing.T) {
 	for _, mode := range []string{"permanent", "canceled", "deadline", "request timeout", "missing"} {
 		t.Run(mode, func(t *testing.T) {
@@ -231,6 +247,9 @@ func TestConcurrentReceiptCancellationJoinsWorkers(t *testing.T) {
 		})
 	}
 }
+
+// TestConcurrentReceiptGlobalPacingAndCooldown checks that all receipt workers obey one request
+// schedule and shared Retry-After pause.
 func TestConcurrentReceiptGlobalPacingAndCooldown(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		block, receipts := receiptBatch(t, 8)
@@ -268,6 +287,9 @@ func TestConcurrentReceiptGlobalPacingAndCooldown(t *testing.T) {
 		}
 	})
 }
+
+// TestConcurrentReceiptValidationFailures injects invalid or incomplete receipt data and rejects
+// the entire batch rather than accepting partial membership.
 func TestConcurrentReceiptValidationFailures(t *testing.T) {
 	for _, kind := range []string{"index", "hash", "block", "cumulative", "snapshot"} {
 		t.Run(kind, func(t *testing.T) {
@@ -303,6 +325,9 @@ func TestConcurrentReceiptValidationFailures(t *testing.T) {
 		})
 	}
 }
+
+// TestReceiptConcurrencyBounds checks the conservative receipt default and supported upper bound
+// before workers can start.
 func TestReceiptConcurrencyBounds(t *testing.T) {
 	for _, n := range []int{-1, 9} {
 		cfg := testConfig("https://offline.invalid")
@@ -317,18 +342,27 @@ func TestReceiptConcurrencyBounds(t *testing.T) {
 	}
 }
 
+// batchStore records attempted extraction commits and checkpoint state to detect partial-batch
+// persistence.
 type batchStore struct {
 	checkpoint domain.Checkpoint
 	commits    int
 }
 
+// Checkpoint reads simulated durable progress for extraction/cursor assertions.
 func (s *batchStore) Checkpoint(context.Context, domain.ChainID) (*domain.Checkpoint, error) {
 	return &s.checkpoint, nil
 }
+
+// Commit simulates the application persistence boundary and records committed identity/progress
+// for assertions; it is not a production database.
 func (s *batchStore) Commit(context.Context, outbound.CommitExtraction) (outbound.CommitResult, error) {
 	s.commits++
 	return outbound.CommitResult{}, nil
 }
+
+// TestConcurrentReceiptFailureNeverCommits connects a failing concurrent source to the extraction
+// use case and asserts persistence is not called.
 func TestConcurrentReceiptFailureNeverCommits(t *testing.T) {
 	for _, budget := range []bool{false, true} {
 		t.Run(fmt.Sprint(budget), func(t *testing.T) {
@@ -361,6 +395,9 @@ func TestConcurrentReceiptFailureNeverCommits(t *testing.T) {
 		})
 	}
 }
+
+// TestConcurrentReceiptCancelPacingAndRetry cancels workers waiting on shared pacing/retry paths
+// and checks that pending requests stop.
 func TestConcurrentReceiptCancelPacingAndRetry(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		block, receipts := receiptBatch(t, 8)

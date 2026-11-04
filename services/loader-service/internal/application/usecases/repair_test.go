@@ -1,3 +1,6 @@
+// repair_test.go exercises audited finite retry allowance and recovery guards in the application
+// orchestration layer.
+
 package usecases
 
 import (
@@ -8,9 +11,15 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/application/ports/outbound"
 )
 
+// repairFake counts repair-port calls to distinguish request validation from storage effects.
 type repairFake struct{ calls int }
 
+// Repair counts invocation of the fake repair port so invalid requests can be proven to fail
+// before storage.
 func (f *repairFake) Repair(context.Context, outbound.RepairRequest) error { f.calls++; return nil }
+
+// TestRepairValidation checks an audited finite allowance and stable operation/event identity are
+// required before invoking recovery storage.
 func TestRepairValidation(t *testing.T) {
 	valid := outbound.RepairRequest{Queue: "inbox", EventID: "transformed-block/v1/1/1/" + strings.Repeat("a", 64), OperationID: "repair-1", Allowance: 3}
 	f := new(repairFake)

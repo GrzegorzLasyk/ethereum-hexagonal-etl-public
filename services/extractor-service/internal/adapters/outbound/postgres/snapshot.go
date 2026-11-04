@@ -1,3 +1,6 @@
+// snapshot.go implements versioned storage metadata and exact raw snapshot reconstruction in the
+// outbound adapter layer.
+
 package postgres
 
 import (
@@ -21,6 +24,8 @@ type metadataV1 struct {
 	Receipts     []domain.Receipt     `json:"receipts"`
 }
 
+// encodeMetadata serializes versioned extraction metadata and nanosecond provenance independently
+// of unchanged raw JSON bytes.
 func encodeMetadata(e domain.Extraction) ([]byte, string, error) {
 	// time.Time.MarshalText validates the RFC3339 year range and retains nanos.
 	timestamp, err := e.ExtractedAt.MarshalText()
@@ -34,6 +39,8 @@ func encodeMetadata(e domain.Extraction) ([]byte, string, error) {
 	return b, string(timestamp), nil
 }
 
+// decodeSnapshot reconstructs retained metadata and raw bytes, rejecting corrupt storage rather
+// than returning a partial snapshot.
 func decodeSnapshot(metadata, raw []byte, receipts [][]byte, provider, extractedAt string) (domain.Extraction, error) {
 	var m metadataV1
 	if json.Unmarshal(metadata, &m) != nil || m.Version != 1 {

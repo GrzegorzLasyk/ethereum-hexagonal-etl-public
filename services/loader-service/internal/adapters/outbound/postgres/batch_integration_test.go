@@ -1,5 +1,8 @@
 //go:build postgresintegration
 
+// batch_integration_test.go exercises whole-row equivalence, replay and late-batch transaction
+// rollback in the outbound adapter layer.
+
 package postgres
 
 import (

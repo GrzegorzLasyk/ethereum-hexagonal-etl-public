@@ -1,3 +1,6 @@
+// metadata_test.go exercises transport identity, version and provenance validation in the shared
+// technical support layer, outside service domains.
+
 package grpccontract
 
 import (
@@ -13,12 +16,16 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
+// metadata builds a deterministic valid event envelope so tests can isolate one invalid field or
+// ACK behavior.
 func metadata() *etlv1.EventMetadata {
 	b := &etlv1.BlockIdentity{ChainId: "1", Number: proto.Uint64(10), BlockHash: []byte(strings.Repeat("a", 32)), ParentHash: []byte(strings.Repeat("b", 32))}
 	return &etlv1.EventMetadata{EventId: EventID("raw-block", b), EventVersion: 1, PayloadVersion: 1,
 		Block: b, Provider: "infura-mainnet", ExtractedAt: timestamppb.New(time.Unix(100, 123))}
 }
 
+// TestMetadataValidation checks stable identity, chain, versions and provenance before the payload
+// is accepted.
 func TestMetadataValidation(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -57,6 +64,8 @@ func TestMetadataValidation(t *testing.T) {
 	}
 }
 
+// TestIdentityBoundaries checks chain/hash/timestamp/event-key edges before transport metadata
+// enters service logic.
 func TestIdentityBoundaries(t *testing.T) {
 	for _, chain := range []string{"0", "1", "184467440737095516160"} {
 		for _, number := range []uint64{0, math.MaxUint64} {

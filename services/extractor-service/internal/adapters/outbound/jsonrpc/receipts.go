@@ -1,3 +1,6 @@
+// receipts.go implements bounded concurrent receipt fetching with indexed results and joined
+// cancellation in the outbound adapter layer.
+
 package jsonrpc
 
 import (
@@ -11,7 +14,12 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
 
+// DefaultReceiptConcurrency keeps receipt acquisition sequential unless the operator explicitly
+// selects more workers.
 const DefaultReceiptConcurrency = 1
+
+// MaxReceiptConcurrency caps the per-block receipt pool; it does not permit parallel height
+// commits.
 const MaxReceiptConcurrency = 8
 
 // fetchReceipts owns a bounded batch of workers, never a goroutine per receipt.

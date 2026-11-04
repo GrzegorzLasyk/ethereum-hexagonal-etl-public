@@ -1,3 +1,6 @@
+// admission_test.go exercises bounded receiver resources and reservation release in the shared
+// technical support layer, outside service domains.
+
 package grpccontract
 
 import (
@@ -14,6 +17,8 @@ import (
 	"google.golang.org/grpc/status"
 )
 
+// TestAdmissionConcurrentBoundAndCancellation contends for request reservations and verifies
+// capacity is released on cancellation instead of leaking slots.
 func TestAdmissionConcurrentBoundAndCancellation(t *testing.T) {
 	l := DefaultLimits()
 	r := DefaultResources(l)
@@ -57,6 +62,8 @@ func TestAdmissionConcurrentBoundAndCancellation(t *testing.T) {
 	release()
 }
 
+// TestAdmissionBeforeDecodeAndAfterHandler checks reservation lifetime around the method handler.
+//
 // Exercise the wrapped MethodDesc directly: overloaded calls must not invoke
 // decoder, and cancellation must not release a slot while a handler still runs.
 func TestAdmissionBeforeDecodeAndAfterHandler(t *testing.T) {
@@ -100,6 +107,8 @@ func TestAdmissionBeforeDecodeAndAfterHandler(t *testing.T) {
 	}
 }
 
+// TestResourceConfiguration checks supported resource ranges and incompatible message/reservation
+// combinations before startup.
 func TestResourceConfiguration(t *testing.T) {
 	l := DefaultLimits()
 	for _, key := range []string{"MAX_INCOMING_REQUESTS", "MAX_INFLIGHT_BYTES", "MAX_GRPC_CONNECTIONS", "DB_MAX_CONNECTIONS"} {
@@ -117,8 +126,11 @@ func TestResourceConfiguration(t *testing.T) {
 	}
 }
 
+// fakeAdmissionListener returns controlled sockets to exercise connection reservation/release.
 type fakeAdmissionListener struct{ conns []net.Conn }
 
+// Accept returns a controlled socket so the connection reservation/release boundary can be
+// exercised.
 func (l *fakeAdmissionListener) Accept() (net.Conn, error) {
 	if len(l.conns) == 0 {
 		return nil, io.EOF
@@ -127,8 +139,16 @@ func (l *fakeAdmissionListener) Accept() (net.Conn, error) {
 	l.conns = l.conns[1:]
 	return c, nil
 }
-func (*fakeAdmissionListener) Close() error   { return nil }
+
+// Close implements test-owned cleanup and records/releases the controlled resource when
+// applicable.
+func (*fakeAdmissionListener) Close() error { return nil }
+
+// Addr supplies a synthetic listener address required by the net.Listener test double.
 func (*fakeAdmissionListener) Addr() net.Addr { return &net.TCPAddr{} }
+
+// TestConnectionBudgetReleasedExactlyOnce closes a wrapped connection repeatedly and verifies the
+// reservation is returned only once.
 func TestConnectionBudgetReleasedExactlyOnce(t *testing.T) {
 	limits := DefaultLimits()
 	resources := DefaultResources(limits)

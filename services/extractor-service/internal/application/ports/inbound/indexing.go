@@ -1,3 +1,6 @@
+// indexing.go defines contracts for range eligibility, admission and operation-identity rules in
+// the application inbound boundary.
+
 package inbound
 
 import (
@@ -12,6 +15,9 @@ type IndexedBlock struct {
 	Block    domain.BlockID
 	Duration time.Duration
 }
+
+// IndexResult reports committed identities, wait/backpressure/recovery state and finite-range
+// completion from one cycle.
 type IndexResult struct {
 	Head                                 *uint64
 	HeadObservedAt                       time.Time
@@ -25,6 +31,10 @@ type IndexResult struct {
 	Processed                            int
 	Done, Waiting, Rewound, Backpressure bool
 }
+
+// Indexer is the polling adapter entry point for a bounded acquisition or reindex cycle.
 type Indexer interface {
+	// Cycle performs bounded sequential acquisition work and reports completion, waiting or a
+	// classified error.
 	Cycle(context.Context) (IndexResult, error)
 }

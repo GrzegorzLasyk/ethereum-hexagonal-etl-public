@@ -1,3 +1,6 @@
+// index.go implements ordered acquisition and bounded provider-relative branch reconciliation in
+// the application orchestration layer.
+
 package usecases
 
 import (
@@ -12,6 +15,8 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
 )
 
+// IndexOptions bounds sequential range, confirmation depth, recovery search and acquisition
+// admission for each cycle.
 type IndexOptions struct {
 	Chain                        domain.ChainID
 	Start                        uint64
@@ -21,6 +26,8 @@ type IndexOptions struct {
 	Limits                       domain.CapacityLimits
 }
 
+// Validate rejects invalid chain/range, batch/recovery depth or capacity bounds before a cycle can
+// run.
 func (o IndexOptions) Validate() error {
 	if err := o.Chain.Validate(); err != nil {
 		return err
@@ -31,6 +38,8 @@ func (o IndexOptions) Validate() error {
 	return o.Limits.Validate()
 }
 
+// Index orchestrates provider-relative ordered acquisition using source/observer/store ports,
+// without embedding SQL or RPC types.
 type Index struct {
 	options  IndexOptions
 	source   outbound.BlockSource
@@ -38,8 +47,12 @@ type Index struct {
 	store    outbound.BranchStore
 }
 
+// Compile-time interface assertion checks adapter/interface compatibility at compile time without
+// allocating runtime state.
 var _ inbound.Indexer = (*Index)(nil)
 
+// NewIndex validates sequential range/capacity options and required source/observer/store ports
+// before scheduling work.
 func NewIndex(o IndexOptions, source outbound.BlockSource, observer outbound.ChainObserver, store outbound.BranchStore) (*Index, error) {
 	if err := o.Validate(); err != nil {
 		return nil, err
@@ -53,6 +66,9 @@ func NewIndex(o IndexOptions, source outbound.BlockSource, observer outbound.Cha
 	}
 	return &Index{o, source, observer, store}, nil
 }
+
+// validHeader checks chain, requested height and parent identity before a provider observation can
+// affect progress.
 func validHeader(h domain.Header, chain domain.ChainID, n uint64) error {
 	if err := h.ID.Validate(); err != nil {
 		return err
@@ -65,6 +81,9 @@ func validHeader(h domain.Header, chain domain.ChainID, n uint64) error {
 	}
 	return nil
 }
+
+// Cycle processes sequential eligible heights, pausing for capacity/confirmations and reconciling
+// a proven fork before advancing durable progress.
 func (u *Index) Cycle(ctx context.Context) (result inbound.IndexResult, err error) {
 	result.ChainID = string(u.options.Chain)
 	started := time.Now()
@@ -187,6 +206,9 @@ func (u *Index) Cycle(ctx context.Context) (result inbound.IndexResult, err erro
 	}
 	return result, nil
 }
+
+// verifyObservation rechecks sampled block and anchor identities; an unstable provider view cannot
+// justify a commit or rewind.
 func verifyObservation(ctx context.Context, o outbound.ChainObserver, block, anchor domain.Header) error {
 	for _, h := range []domain.Header{block, anchor} {
 		now, err := o.Header(ctx, h.ID.Number)
@@ -199,6 +221,9 @@ func verifyObservation(ctx context.Context, o outbound.ChainObserver, block, anc
 	}
 	return nil
 }
+
+// reconcile searches a bounded parent-linked retained ancestry window and rechecks anchors before
+// a conditional audited rewind.
 func (u *Index) reconcile(ctx context.Context, cp domain.Checkpoint, tip, head domain.Header, progress *inbound.IndexResult) error {
 	current := tip
 	var oldChild *domain.Header

@@ -1,3 +1,6 @@
+// repair_test.go exercises audited finite retry allowance and recovery guards in the startup
+// configuration boundary.
+
 package config
 
 import (
@@ -5,6 +8,8 @@ import (
 	"testing"
 )
 
+// TestRepairConfiguration checks an audited finite allowance and stable operation/event identity
+// are required before invoking recovery storage.
 func TestRepairConfiguration(t *testing.T) {
 	for _, key := range []string{"MODE", "REPAIR_QUEUE", "REPAIR_EVENT_ID", "REPAIR_OPERATION_ID", "REPAIR_ALLOWANCE"} {
 		t.Setenv("LOADER_"+key, "")

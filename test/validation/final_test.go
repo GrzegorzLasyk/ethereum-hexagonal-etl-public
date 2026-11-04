@@ -1,3 +1,8 @@
+// final_test.go exercises offline/performance/live phase guards using controlled child commands in
+// the offline test and diagnostic infrastructure.
+
+// Package validation_test provides offline/performance/live phase guards using controlled child
+// commands in the offline test and diagnostic infrastructure.
 package validation_test
 
 import (
@@ -8,6 +13,8 @@ import (
 	"testing"
 )
 
+// TestFinalValidationPhaseIsolation checks explicit offline/performance/live phase separation.
+//
 // Only shell orchestration runs. Every Go/Docker-capable command is a local stub.
 func TestFinalValidationPhaseIsolation(t *testing.T) {
 	for _, tc := range []struct {

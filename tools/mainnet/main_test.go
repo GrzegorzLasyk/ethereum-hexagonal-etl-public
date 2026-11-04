@@ -1,3 +1,6 @@
+// main_test.go exercises command startup, explicit adapter wiring and bounded resource lifetime in
+// the local operator tooling.
+
 package main
 
 import (
@@ -9,6 +12,8 @@ import (
 	"testing"
 )
 
+// configuration builds private-looking but synthetic test configuration; it never reads a user's
+// RPC credentials.
 func configuration(t *testing.T) map[string]string {
 	t.Helper()
 	p := filepath.Join(t.TempDir(), ".env.mainnet")
@@ -22,6 +27,8 @@ func configuration(t *testing.T) map[string]string {
 	return c
 }
 
+// TestPrivateInitialization checks new private configuration creation and refusal to replace an
+// existing file.
 func TestPrivateInitialization(t *testing.T) {
 	p := filepath.Join(t.TempDir(), ".env.mainnet")
 	if err := initialize(p); err != nil {
@@ -50,6 +57,8 @@ func TestPrivateInitialization(t *testing.T) {
 	}
 }
 
+// TestIsolationAndExplicitAcquisition checks private project separation and that setup commands do
+// not implicitly start live RPC.
 func TestIsolationAndExplicitAcquisition(t *testing.T) {
 	c := configuration(t)
 	parent := []string{"PATH=/bin", "DOCKER_HOST=unix:///test", "COMPOSE_FILE=fixture.yaml", "COMPOSE_PROJECT_NAME=ethereum-stage11-danger", "EXTRACTOR_RPC_URL=secret-override", "PGHOST=foreign", "POSTGRES_PASSWORD=foreign"}
@@ -100,6 +109,8 @@ func TestIsolationAndExplicitAcquisition(t *testing.T) {
 	}
 }
 
+// TestRefuseForeignVolumeAndRedactFailures checks operator setup rejects storage not owned by its
+// project and suppresses sensitive command failures.
 func TestRefuseForeignVolumeAndRedactFailures(t *testing.T) {
 	c := configuration(t)
 	volume := c["MAINNET_PROJECT"] + "_mainnet_postgres_data"

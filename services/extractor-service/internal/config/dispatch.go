@@ -1,3 +1,6 @@
+// dispatch.go parses dispatcher worker, retry, deadline and lease settings at the startup
+// configuration boundary.
+
 package config
 
 import (
@@ -9,12 +12,16 @@ import (
 	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/grpccontract"
 )
 
+// DispatchConfig holds explicit publication workers, poll/deadline/lease and bounded retry
+// settings.
 type DispatchConfig struct {
 	Target                                                               string
 	Workers, MaxAttempts                                                 int
 	PollInterval, Timeout, RPCTimeout, Lease, InitialBackoff, MaxBackoff time.Duration
 }
 
+// loadDispatch parses bounded sender concurrency, deadlines, leases and retry policy; it does not
+// connect to the recipient.
 func loadDispatch() (DispatchConfig, error) {
 	c := DispatchConfig{Target: os.Getenv("EXTRACTOR_DISPATCH_TARGET")}
 	if c.Target == "" {

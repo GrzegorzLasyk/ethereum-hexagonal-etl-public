@@ -1,5 +1,8 @@
 //go:build postgresintegration
 
+// indexing_integration_test.go exercises ordered checkpoint and retained-reorg behavior in
+// PostgreSQL in the outbound adapter layer.
+
 package postgres
 
 import (
@@ -19,6 +22,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// testIndexing exercises sequential progress, rewind and retained-history invariants with real
+// local transactions.
 func testIndexing(t *testing.T, pool, owner *pgxpool.Pool) {
 	ctx := t.Context()
 	serial := 900000
@@ -494,14 +499,19 @@ func testIndexing(t *testing.T, pool, owner *pgxpool.Pool) {
 	})
 }
 
+// indexProvider serves an in-memory height map and movable tip for database recovery tests.
 type indexProvider struct {
 	blocks map[uint64]domain.Extraction
 	head   uint64
 }
 
+// ChainID returns the fake provider chain for explicit source-identity checks.
 func (p *indexProvider) ChainID(context.Context) (domain.ChainID, error) {
 	return p.blocks[p.head].Header.ID.ChainID, nil
 }
+
+// Block returns or fails a controlled complete source snapshot so acquisition/persistence
+// boundaries can be exercised.
 func (p *indexProvider) Block(_ context.Context, n uint64) (domain.Extraction, error) {
 	e, ok := p.blocks[n]
 	if !ok {
@@ -509,10 +519,14 @@ func (p *indexProvider) Block(_ context.Context, n uint64) (domain.Extraction, e
 	}
 	return e, nil
 }
+
+// Header returns the controlled provider ancestry at a height for deterministic reorg tests.
 func (p *indexProvider) Header(ctx context.Context, n uint64) (domain.Header, error) {
 	e, err := p.Block(ctx, n)
 	return e.Header, err
 }
+
+// Head returns the current fake provider tip; tests can move it without external RPC.
 func (p *indexProvider) Head(ctx context.Context) (domain.Header, error) {
 	return p.Header(ctx, p.head)
 }
