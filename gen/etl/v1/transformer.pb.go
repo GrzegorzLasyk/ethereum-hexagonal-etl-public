@@ -241,7 +241,7 @@ const file_etl_v1_transformer_proto_rawDesc = "" +
 	"acceptance\x18\x01 \x01(\v2\x19.etl.v1.DurableAcceptanceR\n" +
 	"acceptance2e\n" +
 	"\x12TransformerService\x12O\n" +
-	"\x0eSubmitRawBlock\x12\x1d.etl.v1.SubmitRawBlockRequest\x1a\x1e.etl.v1.SubmitRawBlockResponseBBZ@github.com/GrzegorzLasyk/ethereum-hexagonal-etl/gen/etl/v1;etlv1b\x06proto3"
+	"\x0eSubmitRawBlock\x12\x1d.etl.v1.SubmitRawBlockRequest\x1a\x1e.etl.v1.SubmitRawBlockResponseBIZGgithub.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/gen/etl/v1;etlv1b\x06proto3"
 
 var (
 	file_etl_v1_transformer_proto_rawDescOnce sync.Once

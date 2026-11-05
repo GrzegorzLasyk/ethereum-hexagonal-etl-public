@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/application/ports/outbound"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/loader-service/internal/application/ports/outbound"
 )
 
 // repairFake counts repair-port calls to distinguish request validation from storage effects.

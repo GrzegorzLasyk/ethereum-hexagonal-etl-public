@@ -7,8 +7,9 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/domain"
 	"strconv"
+
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/loader-service/internal/domain"
 )
 
 // hashArray maps fixed-width domain hashes to byte slices for PostgreSQL array parameters.

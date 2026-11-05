@@ -21,7 +21,7 @@ import (
 )
 
 // module pins the repository import prefix for static Hexagonal Architecture boundary checks.
-const module = "github.com/GrzegorzLasyk/ethereum-hexagonal-etl"
+const module = "github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public"
 
 // Deliberately explicit: adding a core dependency requires reviewing its purity.
 // This also blocks infrastructure hidden behind an otherwise innocent helper.

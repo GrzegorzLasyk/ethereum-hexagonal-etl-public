@@ -8,10 +8,10 @@ package logging
 import (
 	"errors"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/logevent"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/application/ports/inbound"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/application/ports/outbound"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/domain"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/internal/logevent"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/transformer-service/internal/application/ports/inbound"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/transformer-service/internal/application/ports/outbound"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/transformer-service/internal/domain"
 )
 
 // ErrorCode exposes only reviewed categories, never underlying error text.

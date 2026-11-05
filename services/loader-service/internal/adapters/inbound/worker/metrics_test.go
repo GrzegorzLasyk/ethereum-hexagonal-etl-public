@@ -5,15 +5,16 @@ package worker_test
 
 import (
 	"context"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/metrics"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/adapters/inbound/worker"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/application/ports/inbound"
 	"io"
 	"log/slog"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/internal/adapters/metrics"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/loader-service/internal/adapters/inbound/worker"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/loader-service/internal/application/ports/inbound"
 )
 
 // TestMetricsIndependentOfLogLevelAndShutdown checks worker observations remain available

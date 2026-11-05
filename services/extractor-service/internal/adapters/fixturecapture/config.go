@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/adapters/outbound/jsonrpc"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/extractor-service/internal/adapters/outbound/jsonrpc"
 )
 
 // ErrConfig signals capture requires explicit opt-in outside CI, a private Mainnet endpoint and

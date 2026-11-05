@@ -7,7 +7,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/extractor-service/internal/domain"
 )
 
 // BlockSource validates wire data outside the application and returns a complete

@@ -8,12 +8,13 @@ package postgres
 import (
 	"errors"
 	"fmt"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/application/ports/inbound"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/application/ports/outbound"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/loader-service/internal/application/ports/inbound"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/loader-service/internal/application/ports/outbound"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // testAdmission contends real owning-role admission transactions and checks capacity, identical

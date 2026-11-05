@@ -7,7 +7,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/application/ports/outbound"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/loader-service/internal/application/ports/outbound"
 )
 
 // loadRepair parses an explicitly selected audited repair operation; ordinary startup leaves

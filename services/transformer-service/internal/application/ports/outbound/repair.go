@@ -9,7 +9,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/domain"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/transformer-service/internal/domain"
 )
 
 // ErrRepairRefused signals recovery request refused. Callers can match this category with

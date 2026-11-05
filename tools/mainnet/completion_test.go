@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/etlverify"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/internal/adapters/etlverify"
 )
 
 // TestLiveE2EGuards checks the private final workflow restricts chain, block, request and duration

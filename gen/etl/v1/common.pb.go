@@ -312,7 +312,7 @@ const file_etl_v1_common_proto_rawDesc = "" +
 	"\x10AcceptanceStatus\x12!\n" +
 	"\x1dACCEPTANCE_STATUS_UNSPECIFIED\x10\x00\x12&\n" +
 	"\"ACCEPTANCE_STATUS_DURABLY_ACCEPTED\x10\x01\x12&\n" +
-	"\"ACCEPTANCE_STATUS_ALREADY_ACCEPTED\x10\x02BBZ@github.com/GrzegorzLasyk/ethereum-hexagonal-etl/gen/etl/v1;etlv1b\x06proto3"
+	"\"ACCEPTANCE_STATUS_ALREADY_ACCEPTED\x10\x02BIZGgithub.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/gen/etl/v1;etlv1b\x06proto3"
 
 var (
 	file_etl_v1_common_proto_rawDescOnce sync.Once

@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/config"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/transformer-service/internal/config"
 )
 
 // TestLoad checks required identities and environment parsing fail safely before startup with

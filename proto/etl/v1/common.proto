@@ -4,7 +4,7 @@ package etl.v1;
 
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/gen/etl/v1;etlv1";
+option go_package = "github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/gen/etl/v1;etlv1";
 
 // Block number alone is not an immutable identity or a claim of finality.
 message BlockIdentity {

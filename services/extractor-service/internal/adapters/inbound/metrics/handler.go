@@ -6,9 +6,10 @@ package metrics
 
 import (
 	"context"
-	shared "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/metrics"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/application/ports/outbound"
 	"net/http"
+
+	shared "github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/internal/adapters/metrics"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/extractor-service/internal/application/ports/outbound"
 )
 
 // Handler adapts the service's owning-schema status reader into shared metric exposition without

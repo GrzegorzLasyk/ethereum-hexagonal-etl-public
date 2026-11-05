@@ -11,7 +11,7 @@ import (
 	"os"
 	"time"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/baseline"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/internal/adapters/baseline"
 )
 
 // Scenario pins dataset, repetitions, worker/batch settings and output identity for an opt-in

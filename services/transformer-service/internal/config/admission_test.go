@@ -4,8 +4,9 @@
 package config_test
 
 import (
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/config"
 	"testing"
+
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/transformer-service/internal/config"
 )
 
 // TestAdmissionLimits checks supported resource ranges and incompatible message/reservation

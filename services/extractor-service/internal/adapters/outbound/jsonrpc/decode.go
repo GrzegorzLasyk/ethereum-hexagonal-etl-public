@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"math/big"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/extractor-service/internal/domain"
 )
 
 // transactionInfo retains decoded transaction identity and fields required to validate its

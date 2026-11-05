@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/etlverify"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/internal/adapters/etlverify"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 

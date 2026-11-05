@@ -14,7 +14,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/etlverify"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/internal/adapters/etlverify"
 )
 
 // completionBounds checks the fixed one-block live verification range and finite operation

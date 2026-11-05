@@ -1,4 +1,4 @@
-module github.com/GrzegorzLasyk/ethereum-hexagonal-etl
+module github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public
 
 go 1.27.3
 

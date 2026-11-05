@@ -12,7 +12,7 @@ import (
 	"math/big"
 	"strings"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/extractor-service/internal/domain"
 )
 
 // object is an adapter-owned wire DTO. Unknown fields remain in the raw result.

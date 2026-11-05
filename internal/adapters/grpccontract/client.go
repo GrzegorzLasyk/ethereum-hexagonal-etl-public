@@ -7,7 +7,7 @@ import (
 	"net"
 	"strconv"
 
-	etlv1 "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/gen/etl/v1"
+	etlv1 "github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/gen/etl/v1"
 )
 
 // LocalAddress preserves the approved unauthenticated loopback-only boundary.

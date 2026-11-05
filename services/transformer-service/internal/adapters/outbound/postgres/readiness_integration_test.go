@@ -7,11 +7,12 @@ package postgres
 
 import (
 	"context"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/health"
-	"github.com/jackc/pgx/v5/pgxpool"
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/internal/adapters/health"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // testReadiness mutates only disposable schema/privilege state to verify not-ready, timeout and
