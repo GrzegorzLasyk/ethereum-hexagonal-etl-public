@@ -13,8 +13,8 @@ import (
 	"testing"
 	"testing/synctest"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/metrics"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/application/ports/outbound"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/internal/adapters/metrics"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/extractor-service/internal/application/ports/outbound"
 )
 
 // TestRPCMetricsCountActualRetriesAndBudget compares transport reservations with metrics so

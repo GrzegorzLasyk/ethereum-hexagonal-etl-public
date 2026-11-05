@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/adapters/inbound/worker"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/application/ports/inbound"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/application/ports/outbound"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/loader-service/internal/adapters/inbound/worker"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/loader-service/internal/application/ports/inbound"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/loader-service/internal/application/ports/outbound"
 )
 
 // TestCorrelatedProgressSurvivesCancellationAndErrors checks that a claimed event's

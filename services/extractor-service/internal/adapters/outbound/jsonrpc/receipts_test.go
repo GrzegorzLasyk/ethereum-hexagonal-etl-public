@@ -18,11 +18,11 @@ import (
 	"testing/synctest"
 	"time"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/application/ports/inbound"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/application/ports/outbound"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/application/usecases"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
-	synthetic "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/test/fixture"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/extractor-service/internal/application/ports/inbound"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/extractor-service/internal/application/ports/outbound"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/extractor-service/internal/application/usecases"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/extractor-service/internal/domain"
+	synthetic "github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/test/fixture"
 )
 
 // Synthetic test-only workload, not modified authentic Ethereum evidence.

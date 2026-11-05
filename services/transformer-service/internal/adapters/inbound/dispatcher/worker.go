@@ -12,10 +12,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/metrics"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/logevent"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/adapters/logging"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/application/ports/inbound"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/internal/adapters/metrics"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/internal/logevent"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/transformer-service/internal/adapters/logging"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/transformer-service/internal/application/ports/inbound"
 )
 
 // Worker owns bounded polling/concurrency policy around an injected application operation and its

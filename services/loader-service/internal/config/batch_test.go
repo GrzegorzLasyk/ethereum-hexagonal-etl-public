@@ -4,8 +4,9 @@
 package config_test
 
 import (
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/config"
 	"testing"
+
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/loader-service/internal/config"
 )
 
 // TestSQLBatchSize checks direct mode, default and maximum batch settings and rejects unsupported

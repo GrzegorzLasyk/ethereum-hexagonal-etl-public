@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/application/ports/outbound"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/transformer-service/internal/application/ports/outbound"
 )
 
 // deliveryFake records delivery claims, acknowledgement mutations and retry decisions at the

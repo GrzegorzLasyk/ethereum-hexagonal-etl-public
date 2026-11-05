@@ -5,8 +5,8 @@ package postgres
 
 import (
 	"context"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/dbreadiness"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/application/ports/outbound"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/internal/adapters/dbreadiness"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/transformer-service/internal/application/ports/outbound"
 )
 
 // Compile-time interface assertion checks adapter/interface compatibility at compile time without

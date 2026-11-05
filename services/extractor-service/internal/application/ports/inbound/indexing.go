@@ -7,7 +7,7 @@ import (
 	"context"
 	"time"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/extractor-service/internal/domain"
 )
 
 // IndexedBlock records only a confirmed durable commit, without source payloads.

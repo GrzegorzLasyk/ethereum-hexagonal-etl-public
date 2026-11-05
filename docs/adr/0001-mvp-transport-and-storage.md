@@ -13,7 +13,7 @@ The project is an educational Ethereum ETL pipeline developed in small, reviewab
 
 ### Services, module, and dependency direction
 
-Use Go and the existing root module, `github.com/GrzegorzLasyk/ethereum-hexagonal-etl`. The current `go.mod` declares Go `1.27.3`; this ADR does not change it. Keep one repository and one module, with `extractor-service`, `transformer-service`, and `loader-service` under `services/` when implementation begins.
+Use Go and the existing root module, `github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public`. The current `go.mod` declares Go `1.27.3`; this ADR does not change it. Keep one repository and one module, with `extractor-service`, `transformer-service`, and `loader-service` under `services/` when implementation begins.
 
 Apply Hexagonal Architecture independently to every service:
 

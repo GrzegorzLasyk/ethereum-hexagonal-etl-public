@@ -7,7 +7,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/application/ports/outbound"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/loader-service/internal/application/ports/outbound"
 	"github.com/jackc/pgx/v5"
 )
 

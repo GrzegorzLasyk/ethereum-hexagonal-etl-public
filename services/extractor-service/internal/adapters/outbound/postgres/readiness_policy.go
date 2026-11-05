@@ -3,7 +3,7 @@
 
 package postgres
 
-import "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/dbreadiness"
+import "github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/internal/adapters/dbreadiness"
 
 // readinessPolicy is the binary compatibility contract. Update alongside migrations.
 var readinessPolicy = dbreadiness.Policy{Schema: "extractor", Tables: []dbreadiness.Table{

@@ -5,7 +5,8 @@ package usecases
 
 import (
 	"context"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/application/ports/outbound"
+
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/loader-service/internal/application/ports/outbound"
 )
 
 // Repair validates the audited recovery request before invoking its owning-store port; it does not

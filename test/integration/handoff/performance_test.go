@@ -21,9 +21,9 @@ import (
 	"testing"
 	"time"
 
-	etlv1 "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/gen/etl/v1"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/baseline"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/test/performance"
+	etlv1 "github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/gen/etl/v1"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/internal/adapters/baseline"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/test/performance"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"google.golang.org/grpc"
 )

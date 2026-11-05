@@ -8,8 +8,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/domain"
 	"time"
+
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/loader-service/internal/domain"
 )
 
 // Decoder implements the application decoding port using adapter-owned JSON representation rules.

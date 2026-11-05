@@ -156,7 +156,7 @@ const file_etl_v1_loader_proto_rawDesc = "" +
 	"acceptance\x18\x01 \x01(\v2\x19.etl.v1.DurableAcceptanceR\n" +
 	"acceptance2x\n" +
 	"\rLoaderService\x12g\n" +
-	"\x16SubmitTransformedBlock\x12%.etl.v1.SubmitTransformedBlockRequest\x1a&.etl.v1.SubmitTransformedBlockResponseBBZ@github.com/GrzegorzLasyk/ethereum-hexagonal-etl/gen/etl/v1;etlv1b\x06proto3"
+	"\x16SubmitTransformedBlock\x12%.etl.v1.SubmitTransformedBlockRequest\x1a&.etl.v1.SubmitTransformedBlockResponseBIZGgithub.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/gen/etl/v1;etlv1b\x06proto3"
 
 var (
 	file_etl_v1_loader_proto_rawDescOnce sync.Once

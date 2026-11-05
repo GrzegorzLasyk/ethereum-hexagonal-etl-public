@@ -5,7 +5,7 @@ package inbound
 
 import (
 	"fmt"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/domain"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/loader-service/internal/domain"
 	"regexp"
 )
 

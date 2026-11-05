@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/metrics"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/internal/adapters/metrics"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"

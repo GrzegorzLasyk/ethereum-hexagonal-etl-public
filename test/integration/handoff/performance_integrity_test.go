@@ -16,8 +16,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/test/fixture"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/test/performance"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/test/fixture"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/test/performance"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 

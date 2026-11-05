@@ -6,12 +6,13 @@ package metrics
 import (
 	"context"
 	"errors"
-	shared "github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/metrics"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/application/ports/outbound"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/domain"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	shared "github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/internal/adapters/metrics"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/loader-service/internal/application/ports/outbound"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/loader-service/internal/domain"
 )
 
 // queueFake injects queue outcomes while recording calls for metrics decorator assertions.

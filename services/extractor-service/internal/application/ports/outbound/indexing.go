@@ -5,7 +5,8 @@ package outbound
 
 import (
 	"context"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
+
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/extractor-service/internal/domain"
 )
 
 // BranchStore owns only Extractor data. Rewind is conditional on the full

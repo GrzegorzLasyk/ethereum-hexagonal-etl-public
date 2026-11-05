@@ -22,7 +22,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/test/performance"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/test/performance"
 )
 
 // baselineRun names a validated scenario file and its prepared test binary for one isolated run.

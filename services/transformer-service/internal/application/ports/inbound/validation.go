@@ -5,8 +5,9 @@ package inbound
 
 import (
 	"fmt"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/transformer-service/internal/domain"
 	"regexp"
+
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/transformer-service/internal/domain"
 )
 
 // providerPattern restricts source-provider metadata to a bounded non-secret label vocabulary.

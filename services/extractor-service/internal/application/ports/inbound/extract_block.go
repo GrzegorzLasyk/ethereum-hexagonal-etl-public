@@ -6,7 +6,7 @@ package inbound
 import (
 	"context"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/domain"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/extractor-service/internal/domain"
 )
 
 // ExtractBlockRequest names the explicit chain and numbered block requested from the extraction

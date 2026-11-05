@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/grpccontract"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/internal/adapters/grpccontract"
 )
 
 // DispatchConfig holds explicit publication workers, poll/deadline/lease and bounded retry

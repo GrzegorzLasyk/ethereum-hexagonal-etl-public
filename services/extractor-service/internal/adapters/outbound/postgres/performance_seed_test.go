@@ -17,14 +17,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/internal/adapters/baseline"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/adapters/fixturecapture"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/adapters/outbound/jsonrpc"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/application/ports/inbound"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/application/ports/outbound"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/extractor-service/internal/application/usecases"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/test/fixture"
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/test/performance"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/internal/adapters/baseline"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/extractor-service/internal/adapters/fixturecapture"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/extractor-service/internal/adapters/outbound/jsonrpc"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/extractor-service/internal/application/ports/inbound"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/extractor-service/internal/application/ports/outbound"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/extractor-service/internal/application/usecases"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/test/fixture"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/test/performance"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 

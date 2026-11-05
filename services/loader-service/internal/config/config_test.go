@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl/services/loader-service/internal/config"
+	"github.com/GrzegorzLasyk/ethereum-hexagonal-etl-public/services/loader-service/internal/config"
 )
 
 // TestLoad checks required identities and environment parsing fail safely before startup with
